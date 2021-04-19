@@ -1,0 +1,24 @@
+[package]
+name = "ringbuffer-performance-comparison"
+version = "0.0.0"
+edition = "2018"
+
+publish = false
+
+[dependencies]
+concurrent-queue = "1.2"
+crossbeam-queue = "0.3"
+npnc = "0.2"
+ringbuf = "0.2"
+rtrb = { path = ".." }
+spsc-bounded-queue = "0.0.1"
+
+[dev-dependencies]
+criterion = "0.3"
+
+[lib]
+bench = false # Don't disturb criterion command line parsing
+
+[[bench]]
+name = "two_threads"
+harness = false

@@ -32,6 +32,14 @@ fn criterion_benchmark(criterion: &mut criterion::Criterion) {
 
     add_function(
         &mut group,
+        "-crossbeam-queue-pr338",
+        crossbeam_queue_pr338::spsc::new,
+        |q, i| q.push(i).is_ok(),
+        |q| q.pop().ok(),
+    );
+
+    add_function(
+        &mut group,
         "-npnc",
         |capacity| npnc::bounded::spsc::channel(capacity.next_power_of_two()),
         |p, i| p.produce(i).is_ok(),

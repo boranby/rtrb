@@ -742,7 +742,8 @@ impl<T> Consumer<T> {
 
     /// Returns a read-only reference to the ring buffer.
     pub fn buffer(&self) -> &RingBuffer<T> {
-        &self.buffer
+        // SAFETY: The pointer is always valid
+        unsafe { self.buffer.as_ref() }
     }
 
     /// Get the head position for reading the next slot, if available.
@@ -755,7 +756,7 @@ impl<T> Consumer<T> {
         // Check if the queue is *possibly* empty.
         if head == self.cached_tail.get() {
             // Refresh the tail ...
-            let tail = self.buffer.tail.load(Ordering::Acquire);
+            let tail = self.buffer().tail.load(Ordering::Acquire);
             self.cached_tail.set(tail);
 
             // ... and check if it's *really* empty.

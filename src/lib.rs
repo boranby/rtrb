@@ -121,6 +121,8 @@ impl<T> RingBuffer<T> {
         assert_ne!(size_of::<T>(), 0, "TODO: check if this works with ZST");
 
         use alloc::alloc::Layout;
+        // Start with an empty layout and add all fields from RingBuffer,
+        // which must have #[repr(C)] for this to work.
         let layout = Layout::new::<()>();
         let (layout, head_offset) = layout
             .extend(Layout::new::<CachePadded<AtomicUsize>>())
@@ -136,28 +138,25 @@ impl<T> RingBuffer<T> {
         let layout = layout.pad_to_align();
 
         let buffer = unsafe {
-            let buffer = alloc::alloc::alloc(layout);
-            if buffer.is_null() {
+            let ptr = alloc::alloc::alloc(layout);
+            if ptr.is_null() {
                 alloc::alloc::handle_alloc_error(layout);
             }
-            buffer
-                .add(head_offset)
+            ptr.add(head_offset)
                 .cast::<CachePadded<AtomicUsize>>()
                 .write(CachePadded::new(AtomicUsize::new(0)));
-            buffer
-                .add(tail_offset)
+            ptr.add(tail_offset)
                 .cast::<CachePadded<AtomicUsize>>()
                 .write(CachePadded::new(AtomicUsize::new(0)));
-            buffer
-                .add(is_abandoned_offset)
+            ptr.add(is_abandoned_offset)
                 .cast::<AtomicBool>()
                 .write(AtomicBool::new(false));
             // Create a (fat) pointer to a slice ...
-            let buffer: *mut [u8] = std::ptr::slice_from_raw_parts_mut(buffer, capacity);
+            let ptr: *mut [u8] = std::ptr::slice_from_raw_parts_mut(ptr, capacity);
             // ... and coerce it into our own dynamically sized type:
-            let buffer = buffer as *mut RingBuffer<T>;
+            let ptr = ptr as *mut RingBuffer<T>;
             // SAFETY: Null check has been done above
-            NonNull::new_unchecked(buffer)
+            NonNull::new_unchecked(ptr)
         };
         let p = Producer {
             buffer,

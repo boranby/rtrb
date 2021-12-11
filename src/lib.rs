@@ -50,7 +50,7 @@
 
 extern crate alloc;
 
-use core::cell::Cell;
+use core::cell::{UnsafeCell, Cell};
 use core::fmt;
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of, MaybeUninit};
@@ -59,11 +59,13 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use cache_padded::CachePadded;
 
+/*
 pub mod chunks;
 
 // This is used in the documentation.
 #[allow(unused_imports)]
 use chunks::WriteChunkUninit;
+*/
 
 /// A bounded single-producer single-consumer (SPSC) queue.
 ///
@@ -73,7 +75,7 @@ use chunks::WriteChunkUninit;
 /// *See also the [crate-level documentation](crate).*
 #[derive(Debug)]
 #[repr(C)]
-struct RingBuffer<T> {
+pub struct RingBuffer<T> {
     /// The head of the queue.
     ///
     /// This integer is in range `0 .. 2 * capacity`.
@@ -91,8 +93,7 @@ struct RingBuffer<T> {
     _marker: PhantomData<T>,
 
     /// Storage for the ring buffer elements (dynamically sized).
-    // TODO: UnsafeCell?
-    slots: [MaybeUninit<T>],
+    slots: [UnsafeCell<MaybeUninit<T>>],
 }
 
 impl<T> RingBuffer<T> {
@@ -201,9 +202,9 @@ impl<T> RingBuffer<T> {
     /// Returns a pointer to the slot at position `pos`.
     ///
     /// If `pos == 0 && capacity == 0`, the returned pointer must not be dereferenced!
-    unsafe fn slot(&self, pos: usize) -> &MaybeUninit<T> {
+    unsafe fn slot_ptr(&self, pos: usize) -> *mut T {
         debug_assert!(pos == 0 || pos < 2 * self.capacity());
-        self.slots.get_unchecked(self.collapse_position(pos))
+        self.slots.get_unchecked(self.collapse_position(pos)).get().cast::<T>()
     }
 
     /// Increments a position by going `n` slots forward.
@@ -270,14 +271,9 @@ impl<T> Drop for RingBuffer<T> {
         // Loop over all slots that hold a value and drop them.
         while head != tail {
             unsafe {
-                self.slot(head).as_mut().drop_in_place();
+                self.slot_ptr(head).drop_in_place();
             }
             head = self.increment1(head);
-        }
-
-        // Finally, deallocate the buffer, but don't run any destructors.
-        unsafe {
-            Vec::from_raw_parts(self.data_ptr, 0, self.capacity());
         }
     }
 }
@@ -297,8 +293,7 @@ impl<T> PartialEq for RingBuffer<T> {
     /// assert_ne!(p1.buffer(), p2.buffer());
     /// ```
     fn eq(&self, other: &Self) -> bool {
-        // There can never be multiple instances with the same `data_ptr`.
-        core::ptr::eq(self.data_ptr, other.data_ptr)
+        core::ptr::eq(self, other)
     }
 }
 
@@ -374,7 +369,7 @@ impl<T> Producer<T> {
         if let Some(tail) = self.next_tail() {
             let buffer = self.buffer();
             unsafe {
-                buffer.slot(tail).as_mut_ptr().write(value);
+                buffer.slot_ptr(tail).write(value);
             }
             let tail = buffer.increment1(tail);
             buffer.tail.store(tail, Ordering::Release);
@@ -404,9 +399,10 @@ impl<T> Producer<T> {
     /// assert_eq!(p.slots(), 1024);
     /// ```
     pub fn slots(&self) -> usize {
-        let head = self.buffer.head.load(Ordering::Acquire);
+        let buffer = self.buffer();
+        let head = buffer.head.load(Ordering::Acquire);
         self.cached_head.set(head);
-        self.buffer.capacity() - self.buffer.distance(head, self.cached_tail.get())
+        buffer.capacity() - buffer.distance(head, self.cached_tail.get())
     }
 
     /// Returns `true` if there are currently no slots available for writing.
@@ -504,15 +500,16 @@ impl<T> Producer<T> {
     /// For performance, this special case is immplemented separately.
     fn next_tail(&self) -> Option<usize> {
         let tail = self.cached_tail.get();
+        let buffer = self.buffer();
 
         // Check if the queue is *possibly* full.
-        if self.buffer.distance(self.cached_head.get(), tail) == self.buffer.capacity() {
+        if buffer.distance(self.cached_head.get(), tail) == buffer.capacity() {
             // Refresh the head ...
-            let head = self.buffer.head.load(Ordering::Acquire);
+            let head = buffer.head.load(Ordering::Acquire);
             self.cached_head.set(head);
 
             // ... and check if it's *really* full.
-            if self.buffer.distance(head, tail) == self.buffer.capacity() {
+            if buffer.distance(head, tail) == buffer.capacity() {
                 return None;
             }
         }
@@ -598,7 +595,7 @@ impl<T> Consumer<T> {
     pub fn pop(&mut self) -> Result<T, PopError> {
         if let Some(head) = self.next_head() {
             let buffer = self.buffer();
-            let value = unsafe { buffer.slot(head).as_ptr().read() };
+            let value = unsafe { buffer.slot_ptr(head).read() };
             let head = buffer.increment1(head);
             buffer.head.store(head, Ordering::Release);
             self.cached_head.set(head);
@@ -628,7 +625,7 @@ impl<T> Consumer<T> {
     /// ```
     pub fn peek(&self) -> Result<&T, PeekError> {
         if let Some(head) = self.next_head() {
-            Ok(unsafe { &*self.buffer().slot(head) })
+            Ok(unsafe { &*self.buffer().slot_ptr(head) })
         } else {
             Err(PeekError::Empty)
         }
@@ -653,9 +650,9 @@ impl<T> Consumer<T> {
     /// assert_eq!(c.slots(), 0);
     /// ```
     pub fn slots(&self) -> usize {
-        let tail = self.buffer.tail.load(Ordering::Acquire);
+        let tail = self.buffer().tail.load(Ordering::Acquire);
         self.cached_tail.set(tail);
-        self.buffer.distance(self.cached_head.get(), tail)
+        self.buffer().distance(self.cached_head.get(), tail)
     }
 
     /// Returns `true` if there are currently no slots available for reading.

@@ -68,7 +68,7 @@ The last command creates an HTML report in `coverage/index.html`.
 Minimum Supported `rustc` Version
 ---------------------------------
 
-This crate's minimum supported `rustc` version (MSRV) is `1.36.0`.
+This crate's minimum supported `rustc` version (MSRV) is `1.44.0`.
 The MSRV is not expected to be updated frequently, but if it is,
 there will be (at least) a *minor* version bump.
 

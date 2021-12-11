@@ -161,7 +161,10 @@ impl<T> RingBuffer<T> {
         buffer.add(is_abandoned_offset)
             .cast::<AtomicBool>()
             .write(AtomicBool::new(false));
-        let buffer = std::ptr::slice_from_raw_parts_mut(buffer, capacity) as *mut RingBuffer<T>;
+        // Create a (fat) pointer to a slice ...
+        let buffer: *mut [u8] = std::ptr::slice_from_raw_parts_mut(buffer, capacity);
+        // ... and coerce it into our own dynamically sized type:
+        let buffer = buffer as *mut RingBuffer<T>;
         // SAFETY: Null check has been done above
         NonNull::new_unchecked(buffer)
     };

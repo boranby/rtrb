@@ -62,6 +62,8 @@ use cache_padded::CachePadded;
 
 pub mod chunks;
 
+mod buffer;
+
 // This is used in the documentation.
 #[allow(unused_imports)]
 use chunks::WriteChunkUninit;

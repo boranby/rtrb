@@ -185,32 +185,32 @@ impl<T> RingBuffer<T> {
     /// assert_eq!(producer.buffer(), consumer.buffer());
     /// ```
     pub fn capacity(&self) -> usize {
-        self.capacity
+        self.slots.len()
     }
 
     /// Wraps a position from the range `0 .. 2 * capacity` to `0 .. capacity`.
     fn collapse_position(&self, pos: usize) -> usize {
-        debug_assert!(pos == 0 || pos < 2 * self.capacity);
-        if pos < self.capacity {
+        debug_assert!(pos == 0 || pos < 2 * self.capacity());
+        if pos < self.capacity() {
             pos
         } else {
-            pos - self.capacity
+            pos - self.capacity()
         }
     }
 
     /// Returns a pointer to the slot at position `pos`.
     ///
     /// If `pos == 0 && capacity == 0`, the returned pointer must not be dereferenced!
-    unsafe fn slot_ptr(&self, pos: usize) -> *mut T {
-        debug_assert!(pos == 0 || pos < 2 * self.capacity);
-        self.data_ptr.add(self.collapse_position(pos))
+    unsafe fn slot(&self, pos: usize) -> &MaybeUninit<T> {
+        debug_assert!(pos == 0 || pos < 2 * self.capacity());
+        self.slots.get_unchecked(self.collapse_position(pos))
     }
 
     /// Increments a position by going `n` slots forward.
     fn increment(&self, pos: usize, n: usize) -> usize {
-        debug_assert!(pos == 0 || pos < 2 * self.capacity);
-        debug_assert!(n <= self.capacity);
-        let threshold = 2 * self.capacity - n;
+        debug_assert!(pos == 0 || pos < 2 * self.capacity());
+        debug_assert!(n <= self.capacity());
+        let threshold = 2 * self.capacity() - n;
         if pos < threshold {
             pos + n
         } else {
@@ -222,9 +222,9 @@ impl<T> RingBuffer<T> {
     ///
     /// This is more efficient than self.increment(..., 1).
     fn increment1(&self, pos: usize) -> usize {
-        debug_assert_ne!(self.capacity, 0);
-        debug_assert!(pos < 2 * self.capacity);
-        if pos < 2 * self.capacity - 1 {
+        debug_assert_ne!(self.capacity(), 0);
+        debug_assert!(pos < 2 * self.capacity());
+        if pos < 2 * self.capacity() - 1 {
             pos + 1
         } else {
             0
@@ -233,12 +233,12 @@ impl<T> RingBuffer<T> {
 
     /// Returns the distance between two positions.
     fn distance(&self, a: usize, b: usize) -> usize {
-        debug_assert!(a == 0 || a < 2 * self.capacity);
-        debug_assert!(b == 0 || b < 2 * self.capacity);
+        debug_assert!(a == 0 || a < 2 * self.capacity());
+        debug_assert!(b == 0 || b < 2 * self.capacity());
         if a <= b {
             b - a
         } else {
-            2 * self.capacity - a + b
+            2 * self.capacity() - a + b
         }
     }
 }
@@ -270,14 +270,14 @@ impl<T> Drop for RingBuffer<T> {
         // Loop over all slots that hold a value and drop them.
         while head != tail {
             unsafe {
-                self.slot_ptr(head).drop_in_place();
+                self.slot(head).as_mut().drop_in_place();
             }
             head = self.increment1(head);
         }
 
         // Finally, deallocate the buffer, but don't run any destructors.
         unsafe {
-            Vec::from_raw_parts(self.data_ptr, 0, self.capacity);
+            Vec::from_raw_parts(self.data_ptr, 0, self.capacity());
         }
     }
 }
@@ -372,11 +372,12 @@ impl<T> Producer<T> {
     /// ```
     pub fn push(&mut self, value: T) -> Result<(), PushError<T>> {
         if let Some(tail) = self.next_tail() {
+            let buffer = self.buffer();
             unsafe {
-                self.buffer.slot_ptr(tail).write(value);
+                buffer.slot(tail).as_mut_ptr().write(value);
             }
-            let tail = self.buffer.increment1(tail);
-            self.buffer.tail.store(tail, Ordering::Release);
+            let tail = buffer.increment1(tail);
+            buffer.tail.store(tail, Ordering::Release);
             self.cached_tail.set(tail);
             Ok(())
         } else {
@@ -405,7 +406,7 @@ impl<T> Producer<T> {
     pub fn slots(&self) -> usize {
         let head = self.buffer.head.load(Ordering::Acquire);
         self.cached_head.set(head);
-        self.buffer.capacity - self.buffer.distance(head, self.cached_tail.get())
+        self.buffer.capacity() - self.buffer.distance(head, self.cached_tail.get())
     }
 
     /// Returns `true` if there are currently no slots available for writing.
@@ -488,7 +489,7 @@ impl<T> Producer<T> {
     /// ```
     pub fn is_abandoned(&self) -> bool {
         // We don't care about the ordering of other reads or writes, Relaxed is enough.
-        self.buffer.is_abandoned.load(Ordering::Relaxed)
+        self.buffer().is_abandoned.load(Ordering::Relaxed)
     }
 
     /// Returns a read-only reference to the ring buffer.
@@ -505,13 +506,13 @@ impl<T> Producer<T> {
         let tail = self.cached_tail.get();
 
         // Check if the queue is *possibly* full.
-        if self.buffer.distance(self.cached_head.get(), tail) == self.buffer.capacity {
+        if self.buffer.distance(self.cached_head.get(), tail) == self.buffer.capacity() {
             // Refresh the head ...
             let head = self.buffer.head.load(Ordering::Acquire);
             self.cached_head.set(head);
 
             // ... and check if it's *really* full.
-            if self.buffer.distance(head, tail) == self.buffer.capacity {
+            if self.buffer.distance(head, tail) == self.buffer.capacity() {
                 return None;
             }
         }
@@ -596,9 +597,10 @@ impl<T> Consumer<T> {
     /// ```
     pub fn pop(&mut self) -> Result<T, PopError> {
         if let Some(head) = self.next_head() {
-            let value = unsafe { self.buffer.slot_ptr(head).read() };
-            let head = self.buffer.increment1(head);
-            self.buffer.head.store(head, Ordering::Release);
+            let buffer = self.buffer();
+            let value = unsafe { buffer.slot(head).as_ptr().read() };
+            let head = buffer.increment1(head);
+            buffer.head.store(head, Ordering::Release);
             self.cached_head.set(head);
             Ok(value)
         } else {
@@ -626,7 +628,7 @@ impl<T> Consumer<T> {
     /// ```
     pub fn peek(&self) -> Result<&T, PeekError> {
         if let Some(head) = self.next_head() {
-            Ok(unsafe { &*self.buffer.slot_ptr(head) })
+            Ok(unsafe { &*self.buffer().slot(head) })
         } else {
             Err(PeekError::Empty)
         }
@@ -734,7 +736,8 @@ impl<T> Consumer<T> {
     /// }
     /// ```
     pub fn is_abandoned(&self) -> bool {
-        Arc::strong_count(&self.buffer) < 2
+        // We don't care about the ordering of other reads or writes, Relaxed is enough.
+        self.buffer().is_abandoned.load(Ordering::Relaxed)
     }
 
     /// Returns a read-only reference to the ring buffer.

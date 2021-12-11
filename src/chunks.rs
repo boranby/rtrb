@@ -238,21 +238,22 @@ impl<T> Producer<T> {
     /// see [`Producer::write_chunk()`].
     pub fn write_chunk_uninit(&mut self, n: usize) -> Result<WriteChunkUninit<'_, T>, ChunkError> {
         let tail = self.cached_tail.get();
+        let buffer = self.buffer();
 
         // Check if the queue has *possibly* not enough slots.
-        if self.buffer.capacity - self.buffer.distance(self.cached_head.get(), tail) < n {
+        if buffer.capacity() - buffer.distance(self.cached_head.get(), tail) < n {
             // Refresh the head ...
-            let head = self.buffer.head.load(Ordering::Acquire);
+            let head = buffer.head.load(Ordering::Acquire);
             self.cached_head.set(head);
 
             // ... and check if there *really* are not enough slots.
-            let slots = self.buffer.capacity - self.buffer.distance(head, tail);
+            let slots = buffer.capacity() - buffer.distance(head, tail);
             if slots < n {
                 return Err(ChunkError::TooFewSlots(slots));
             }
         }
-        let tail = self.buffer.collapse_position(tail);
-        let first_len = n.min(self.buffer.capacity - tail);
+        let tail = buffer.collapse_position(tail);
+        let first_len = n.min(buffer.capacity() - tail);
         Ok(WriteChunkUninit {
             first_ptr: unsafe { self.buffer.data_ptr.add(tail) },
             first_len,

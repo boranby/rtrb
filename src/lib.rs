@@ -53,7 +53,7 @@ extern crate alloc;
 use core::cell::{Cell, UnsafeCell};
 use core::fmt;
 use core::marker::PhantomData;
-use core::mem::{align_of, size_of, MaybeUninit};
+use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -151,7 +151,7 @@ impl<T> RingBuffer<T> {
                 .cast::<AtomicBool>()
                 .write(AtomicBool::new(false));
             // Create a (fat) pointer to a slice ...
-            let ptr: *mut [u8] = std::ptr::slice_from_raw_parts_mut(ptr, capacity);
+            let ptr: *mut [u8] = core::ptr::slice_from_raw_parts_mut(ptr, capacity);
             // ... and coerce it into our own dynamically sized type:
             let ptr = ptr as *mut RingBuffer<T>;
             // SAFETY: Null check has been done above
@@ -259,7 +259,7 @@ unsafe fn abandon<T>(buffer: NonNull<RingBuffer<T>>) {
         // Global allocator.
         // Checking the `is_abandoned` flag makes sure that the RingBuffer is dropped
         // only once when both producer and consumer are gone.
-        Box::from_raw(buffer.as_ptr());
+        alloc::boxed::Box::from_raw(buffer.as_ptr());
     }
 }
 

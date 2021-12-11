@@ -53,14 +53,13 @@ extern crate alloc;
 use core::cell::Cell;
 use core::fmt;
 use core::marker::PhantomData;
-use core::mem::{MaybeUninit, size_of, align_of};
+use core::mem::{align_of, size_of, MaybeUninit};
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use cache_padded::CachePadded;
 
 pub mod chunks;
-
 
 // This is used in the documentation.
 #[allow(unused_imports)]
@@ -96,7 +95,6 @@ struct RingBuffer<T> {
     slots: [MaybeUninit<T>],
 }
 
-
 impl<T> RingBuffer<T> {
     /// Creates a `RingBuffer` with the given `capacity` and returns [`Producer`] and [`Consumer`].
     ///
@@ -120,67 +118,59 @@ impl<T> RingBuffer<T> {
     #[allow(clippy::new_ret_no_self)]
     #[must_use]
     pub fn new(capacity: usize) -> (Producer<T>, Consumer<T>) {
-    assert_ne!(
-        size_of::<T>(),
-        0,
-        "TODO: check if this works with ZST"
-    );
+        assert_ne!(size_of::<T>(), 0, "TODO: check if this works with ZST");
 
-    use alloc::alloc::Layout;
-    let layout = Layout::new::<()>();
-    let (layout, head_offset) = layout
-        .extend(Layout::new::<CachePadded<AtomicUsize>>())
-        .unwrap();
-    assert_eq!(head_offset, 0);
-    let (layout, tail_offset) = layout
-        .extend(Layout::new::<CachePadded<AtomicUsize>>())
-        .unwrap();
-    let (layout, is_abandoned_offset) = layout.extend(Layout::new::<AtomicBool>()).unwrap();
-    let (layout, _slots_offset) = layout
-        .extend(
-            Layout::from_size_align(
-                size_of::<T>() * capacity,
-                align_of::<T>(),
-            )
-            .unwrap(),
-        )
-        .unwrap();
-    let layout = layout.pad_to_align();
+        use alloc::alloc::Layout;
+        let layout = Layout::new::<()>();
+        let (layout, head_offset) = layout
+            .extend(Layout::new::<CachePadded<AtomicUsize>>())
+            .unwrap();
+        assert_eq!(head_offset, 0);
+        let (layout, tail_offset) = layout
+            .extend(Layout::new::<CachePadded<AtomicUsize>>())
+            .unwrap();
+        let (layout, is_abandoned_offset) = layout.extend(Layout::new::<AtomicBool>()).unwrap();
+        let (layout, _slots_offset) = layout
+            .extend(Layout::from_size_align(size_of::<T>() * capacity, align_of::<T>()).unwrap())
+            .unwrap();
+        let layout = layout.pad_to_align();
 
-    let buffer = unsafe {
-        let buffer = alloc::alloc::alloc(layout);
-        if buffer.is_null() {
-            alloc::alloc::handle_alloc_error(layout);
-        }
-        buffer.add(head_offset)
-            .cast::<CachePadded<AtomicUsize>>()
-            .write(CachePadded::new(AtomicUsize::new(0)));
-        buffer.add(tail_offset)
-            .cast::<CachePadded<AtomicUsize>>()
-            .write(CachePadded::new(AtomicUsize::new(0)));
-        buffer.add(is_abandoned_offset)
-            .cast::<AtomicBool>()
-            .write(AtomicBool::new(false));
-        // Create a (fat) pointer to a slice ...
-        let buffer: *mut [u8] = std::ptr::slice_from_raw_parts_mut(buffer, capacity);
-        // ... and coerce it into our own dynamically sized type:
-        let buffer = buffer as *mut RingBuffer<T>;
-        // SAFETY: Null check has been done above
-        NonNull::new_unchecked(buffer)
-    };
-    let p = Producer {
-        buffer,
-        cached_head: Cell::new(0),
-        cached_tail: Cell::new(0),
-    };
-    let c = Consumer {
-        buffer,
-        cached_head: Cell::new(0),
-        cached_tail: Cell::new(0),
-    };
-    (p, c)
-}
-
+        let buffer = unsafe {
+            let buffer = alloc::alloc::alloc(layout);
+            if buffer.is_null() {
+                alloc::alloc::handle_alloc_error(layout);
+            }
+            buffer
+                .add(head_offset)
+                .cast::<CachePadded<AtomicUsize>>()
+                .write(CachePadded::new(AtomicUsize::new(0)));
+            buffer
+                .add(tail_offset)
+                .cast::<CachePadded<AtomicUsize>>()
+                .write(CachePadded::new(AtomicUsize::new(0)));
+            buffer
+                .add(is_abandoned_offset)
+                .cast::<AtomicBool>()
+                .write(AtomicBool::new(false));
+            // Create a (fat) pointer to a slice ...
+            let buffer: *mut [u8] = std::ptr::slice_from_raw_parts_mut(buffer, capacity);
+            // ... and coerce it into our own dynamically sized type:
+            let buffer = buffer as *mut RingBuffer<T>;
+            // SAFETY: Null check has been done above
+            NonNull::new_unchecked(buffer)
+        };
+        let p = Producer {
+            buffer,
+            cached_head: Cell::new(0),
+            cached_tail: Cell::new(0),
+        };
+        let c = Consumer {
+            buffer,
+            cached_head: Cell::new(0),
+            cached_tail: Cell::new(0),
+        };
+        (p, c)
+    }
 
     /// Returns the capacity of the queue.
     ///

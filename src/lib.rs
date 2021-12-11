@@ -50,7 +50,7 @@
 
 extern crate alloc;
 
-use core::cell::{UnsafeCell, Cell};
+use core::cell::{Cell, UnsafeCell};
 use core::fmt;
 use core::marker::PhantomData;
 use core::mem::{align_of, size_of, MaybeUninit};
@@ -119,8 +119,6 @@ impl<T> RingBuffer<T> {
     #[allow(clippy::new_ret_no_self)]
     #[must_use]
     pub fn new(capacity: usize) -> (Producer<T>, Consumer<T>) {
-        assert_ne!(size_of::<T>(), 0, "TODO: check if this works with ZST");
-
         use alloc::alloc::Layout;
         // Start with an empty layout and add all fields from RingBuffer,
         // which must have #[repr(C)] for this to work.
@@ -134,7 +132,7 @@ impl<T> RingBuffer<T> {
             .unwrap();
         let (layout, is_abandoned_offset) = layout.extend(Layout::new::<AtomicBool>()).unwrap();
         let (layout, _slots_offset) = layout
-            .extend(Layout::from_size_align(size_of::<T>() * capacity, align_of::<T>()).unwrap())
+            .extend(Layout::array::<T>(capacity).unwrap())
             .unwrap();
         let layout = layout.pad_to_align();
 
@@ -204,7 +202,10 @@ impl<T> RingBuffer<T> {
     /// If `pos == 0 && capacity == 0`, the returned pointer must not be dereferenced!
     unsafe fn slot_ptr(&self, pos: usize) -> *mut T {
         debug_assert!(pos == 0 || pos < 2 * self.capacity());
-        self.slots.get_unchecked(self.collapse_position(pos)).get().cast::<T>()
+        self.slots
+            .get_unchecked(self.collapse_position(pos))
+            .get()
+            .cast::<T>()
     }
 
     /// Increments a position by going `n` slots forward.

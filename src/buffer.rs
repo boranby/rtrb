@@ -2,62 +2,21 @@ use core::cell::Cell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, AtomicUsize};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use cache_padded::CachePadded;
 
-struct ProducerHeader {
-    tail: AtomicUsize,
-    /*
-    // this should only be accessed from the producer thread
-    capacity: usize,
-    */
-    is_alive: AtomicBool,
-}
-
-struct ConsumerHeader {
-    head: AtomicUsize,
-    /*
-    capacity: usize,
-    */
-    is_alive: AtomicBool,
-}
-
-/*
-#[repr(C)]
-struct ArcInner<T: ?Sized> {
-    pub(crate) count: atomic::AtomicUsize,
-    pub(crate) data: T,
-}
-*/
-
-/*
-#[repr(C)]
-struct Slots<T: ?Sized> {
-    data: T,
-}
-*/
-
-// dynamically sized type
 #[repr(C)]
 struct RingBuffer<T> {
-    producer_header: CachePadded<ProducerHeader>,
-    consumer_header: CachePadded<ConsumerHeader>,
+    head: CachePadded<AtomicUsize>,
+    tail: CachePadded<AtomicUsize>,
+    is_abandoned: AtomicBool,
     /// Indicates that dropping a `RingBuffer<T>` may drop elements of type `T`.
     _marker: PhantomData<T>,
     /// Dynamically sized field must be the last one
     // TODO: UnsafeCell?
     slots: [MaybeUninit<T>],
-    //slots: Slots<[MaybeUninit<T>]>,
 }
-
-/*
-#[repr(transparent)]
-struct Pointer<T> {
-    ptr: std::ptr::NonNull<RingBuffer<T>>,
-    _marker: PhantomData<T>,
-}
-*/
 
 impl<T> Drop for RingBuffer<T> {
     fn drop(&mut self) {
@@ -74,20 +33,22 @@ pub struct Producer<T> {
     tail: Cell<usize>,
 }
 
+unsafe fn abandon<T>(buffer: NonNull<RingBuffer<T>>) {
+    // We don't care about the ordering of other reads or writes, Relaxed is enough.
+    if buffer
+        .as_ref()
+        .is_abandoned
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        Box::from_raw(buffer.as_ptr());
+    }
+}
+
 impl<T> Drop for Producer<T> {
     fn drop(&mut self) {
         println!("Dropping Producer!");
-        let buf = self.buffer.as_ref();
-
-        // TODO: if consumer is dead, deallocate
-
-        // TODO set self to dead
-
-        // TODO: if consumer was alive, check again, deallocate
-
-        buf.producer_header.is_alive;
-        buf.consumer_header.is_alive;
-        unsafe { Box::from_raw(self.buffer.as_ptr()) };
+        unsafe { abandon(self.buffer) };
     }
 }
 
@@ -107,13 +68,9 @@ pub struct Consumer<T> {
 impl<T> Drop for Consumer<T> {
     fn drop(&mut self) {
         println!("Dropping Consumer!");
-        let buf = self.buffer.as_ref();
-
-        // TODO: if producer is dead, deallocate
-
-        // TODO set self to dead
-
-        // TODO: if producer was alive, check again, deallocate
+        unsafe { abandon(self.buffer) };
+    }
+}
 
 fn try_to_create_dst<T>(capacity: usize) -> (Producer<T>, Consumer<T>) {
     assert_ne!(
@@ -122,74 +79,45 @@ fn try_to_create_dst<T>(capacity: usize) -> (Producer<T>, Consumer<T>) {
         "TODO: check if this works with ZST"
     );
 
-    #[repr(C)]
-    struct Dummy<T> {
-        producer_header: CachePadded<ProducerHeader>,
-        consumer_header: CachePadded<ConsumerHeader>,
-        //nonsense: bool,
-        slots: [T; 0],
-    }
-
-    //let slice_offset = ???;
-
-    println!(
-        "producer size: {}",
-        std::mem::size_of::<CachePadded<ProducerHeader>>()
-    );
-    println!(
-        "consumer size: {}",
-        std::mem::size_of::<CachePadded<ConsumerHeader>>()
-    );
-    println!("dummy size: {}", std::mem::size_of::<Dummy<T>>());
-
-    //let ptr: *mut RingBuffer<T>;
-
-    // TODO: get (uninitialized) buffer from somewhere
-
-    // ptr.align_offset(align_of::<???>())
-
     use alloc::alloc::Layout;
-
-    let producer_layout = Layout::new::<CachePadded<ProducerHeader>>();
-    let consumer_layout = Layout::new::<CachePadded<ConsumerHeader>>();
-    let slots_layout = Layout::from_size_align(
-        std::mem::size_of::<T>() * capacity,
-        std::mem::align_of::<T>(),
-    )
-    .unwrap();
-
     let layout = Layout::new::<()>();
-    let (layout, p_header_offset) = layout.extend(producer_layout).unwrap();
-    assert_eq!(p_header_offset, 0);
-    let (layout, c_header_offset) = layout.extend(consumer_layout).unwrap();
-    let (layout, _slots_offset) = layout.extend(slots_layout).unwrap();
+    let (layout, head_offset) = layout
+        .extend(Layout::new::<CachePadded<AtomicUsize>>())
+        .unwrap();
+    assert_eq!(head_offset, 0);
+    let (layout, tail_offset) = layout
+        .extend(Layout::new::<CachePadded<AtomicUsize>>())
+        .unwrap();
+    let (layout, is_abandoned_offset) = layout.extend(Layout::new::<AtomicBool>()).unwrap();
+    let (layout, _slots_offset) = layout
+        .extend(
+            Layout::from_size_align(
+                std::mem::size_of::<T>() * capacity,
+                std::mem::align_of::<T>(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
     let layout = layout.pad_to_align();
 
     let ptr = unsafe {
         let ptr = alloc::alloc::alloc(layout);
         if ptr.is_null() {
             alloc::alloc::handle_alloc_error(layout);
-            unreachable!();
         }
-        ptr.add(p_header_offset)
-            .cast::<CachePadded<ProducerHeader>>()
-            .write(CachePadded::new(ProducerHeader {
-                tail: AtomicUsize::new(0),
-                is_alive: AtomicBool::new(true),
-            }));
-        ptr.add(c_header_offset)
-            .cast::<CachePadded<ConsumerHeader>>()
-            .write(CachePadded::new(ConsumerHeader {
-                head: AtomicUsize::new(0),
-                is_alive: AtomicBool::new(true),
-            }));
+        ptr.add(head_offset)
+            .cast::<CachePadded<AtomicUsize>>()
+            .write(CachePadded::new(AtomicUsize::new(0)));
+        ptr.add(tail_offset)
+            .cast::<CachePadded<AtomicUsize>>()
+            .write(CachePadded::new(AtomicUsize::new(0)));
+        ptr.add(is_abandoned_offset)
+            .cast::<AtomicBool>()
+            .write(AtomicBool::new(false));
         let ptr = std::ptr::slice_from_raw_parts_mut(ptr, capacity) as *mut RingBuffer<T>;
-        //assert_eq!(std::mem::size_of::<&RingBuffer<T>>(), std::mem::size_of::<&[T]>());
-        assert_eq!((*ptr).slots.len(), capacity);
         // Safety: null check has been done above
         NonNull::new_unchecked(ptr)
     };
-    //let reference: &RingBuffer<T> = ptr.as_ref();
 
     let p = Producer {
         buffer: ptr,

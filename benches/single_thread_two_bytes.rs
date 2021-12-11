@@ -53,6 +53,7 @@ pub fn criterion_benchmark(criterion: &mut criterion::Criterion) {
         result
     });
 
+    /*
     add_function(&mut group, "2-slice-read", |data| {
         let mut result = [0; 2];
         for &i in data.iter() {
@@ -136,6 +137,7 @@ pub fn criterion_benchmark(criterion: &mut criterion::Criterion) {
         }
         result
     });
+    */
 
     group.finish();
 }

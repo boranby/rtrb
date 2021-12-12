@@ -340,7 +340,11 @@ where
 {
     /// Fills all slots with the [`Default`] value.
     fn from(chunk: WriteChunkUninit<'a, T>) -> Self {
-        for slot in chunk.first_slice.iter_mut().chain(chunk.second_slice.iter_mut()) {
+        for slot in chunk
+            .first_slice
+            .iter_mut()
+            .chain(chunk.second_slice.iter_mut())
+        {
             unsafe {
                 slot.as_mut_ptr().write(Default::default());
             }
@@ -422,9 +426,9 @@ pub struct WriteChunkUninit<'a, T> {
 
 impl<T> PartialEq for WriteChunkUninit<'_, T> {
     fn eq(&self, other: &Self) -> bool {
-        core::ptr::eq(self.first_slice, other.first_slice) &&
-        core::ptr::eq(self.second_slice, other.second_slice) &&
-        core::ptr::eq(self.producer, other.producer)
+        core::ptr::eq(self.first_slice, other.first_slice)
+            && core::ptr::eq(self.second_slice, other.second_slice)
+            && core::ptr::eq(self.producer, other.producer)
     }
 }
 
@@ -534,7 +538,11 @@ impl<T> WriteChunkUninit<'_, T> {
     {
         let mut iter = iter.into_iter();
         let mut iterated = 0;
-        for slot in self.first_slice.iter_mut().chain(self.second_slice.iter_mut()) {
+        for slot in self
+            .first_slice
+            .iter_mut()
+            .chain(self.second_slice.iter_mut())
+        {
             match iter.next() {
                 Some(item) => {
                     // Safety: It is allowed to write to this memory slot
@@ -577,9 +585,9 @@ pub struct ReadChunk<'a, T> {
 
 impl<T> PartialEq for ReadChunk<'_, T> {
     fn eq(&self, other: &Self) -> bool {
-        core::ptr::eq(self.first_slice, other.first_slice) &&
-        core::ptr::eq(self.second_slice, other.second_slice) &&
-        core::ptr::eq(self.consumer, other.consumer)
+        core::ptr::eq(self.first_slice, other.first_slice)
+            && core::ptr::eq(self.second_slice, other.second_slice)
+            && core::ptr::eq(self.consumer, other.consumer)
     }
 }
 
@@ -705,7 +713,10 @@ impl<'a, T> IntoIterator for ReadChunk<'a, T> {
     /// Non-iterated items remain in the ring buffer.
     fn into_iter(self) -> Self::IntoIter {
         Self::IntoIter {
-            iter: self.first_slice.iter_mut().chain(self.second_slice.iter_mut()),
+            iter: self
+                .first_slice
+                .iter_mut()
+                .chain(self.second_slice.iter_mut()),
             iterated: 0,
             consumer: self.consumer,
         }

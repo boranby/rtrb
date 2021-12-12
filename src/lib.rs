@@ -245,27 +245,37 @@ impl<T> RingBuffer<T> {
     }
 }
 
+#[inline]
 unsafe fn abandon<T>(buffer: NonNull<RingBuffer<T>>) {
-    // We don't care about the ordering of other reads or writes, Relaxed is enough.
+    // The other thread must not access `is_abandoned` after it's deleted in this thread.
+    // This is accomplished with Acquire/Release.
     if buffer
         .as_ref()
         .is_abandoned
-        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
-        // Turn the pointer into a Box and immediately drop it.
-        //
-        // SAFETY: This is allowed because the RingBuffer has been allocated with the
-        // Global allocator.
-        // Checking the `is_abandoned` flag makes sure that the RingBuffer is dropped
-        // only once when both producer and consumer are gone.
-        alloc::boxed::Box::from_raw(buffer.as_ptr());
+        drop_slow(buffer);
     }
+}
+
+/// Non-inlined part of `abandon()`.
+#[inline(never)]
+unsafe fn drop_slow<T>(buffer: NonNull<RingBuffer<T>>) {
+    // Turn the pointer into a Box and immediately drop it.
+    //
+    // SAFETY: This is allowed because the RingBuffer has been allocated with the
+    // Global allocator.
+    // Checking the `is_abandoned` flag makes sure that the RingBuffer is dropped
+    // only once when both producer and consumer are gone.
+    let _ = alloc::boxed::Box::from_raw(buffer.as_ptr());
 }
 
 impl<T> Drop for RingBuffer<T> {
     /// Drops all non-empty slots.
     fn drop(&mut self) {
+        // The threads have already been synchronized in `abandon()`,
+        // Relaxed ordering is sufficient here.
         let mut head = self.head.load(Ordering::Relaxed);
         let tail = self.tail.load(Ordering::Relaxed);
 
@@ -340,6 +350,7 @@ pub struct Producer<T> {
 unsafe impl<T: Send> Send for Producer<T> {}
 
 impl<T> Drop for Producer<T> {
+    #[inline]
     fn drop(&mut self) {
         // SAFETY: The pointer is always valid.
         unsafe { abandon(self.buffer) };
@@ -485,8 +496,7 @@ impl<T> Producer<T> {
     /// }
     /// ```
     pub fn is_abandoned(&self) -> bool {
-        // We don't care about the ordering of other reads or writes, Relaxed is enough.
-        self.buffer().is_abandoned.load(Ordering::Relaxed)
+        self.buffer().is_abandoned.load(Ordering::Acquire)
     }
 
     /// Returns a read-only reference to the ring buffer.
@@ -557,6 +567,7 @@ pub struct Consumer<T> {
 unsafe impl<T: Send> Send for Consumer<T> {}
 
 impl<T> Drop for Consumer<T> {
+    #[inline]
     fn drop(&mut self) {
         // SAFETY: The pointer is always valid.
         unsafe { abandon(self.buffer) };
@@ -734,8 +745,7 @@ impl<T> Consumer<T> {
     /// }
     /// ```
     pub fn is_abandoned(&self) -> bool {
-        // We don't care about the ordering of other reads or writes, Relaxed is enough.
-        self.buffer().is_abandoned.load(Ordering::Relaxed)
+        self.buffer().is_abandoned.load(Ordering::Acquire)
     }
 
     /// Returns a read-only reference to the ring buffer.

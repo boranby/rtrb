@@ -59,13 +59,11 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use cache_padded::CachePadded;
 
-/*
 pub mod chunks;
 
 // This is used in the documentation.
 #[allow(unused_imports)]
 use chunks::WriteChunkUninit;
-*/
 
 /// A bounded single-producer single-consumer (SPSC) queue.
 ///

@@ -247,14 +247,19 @@ impl<T> RingBuffer<T> {
 
 #[inline]
 unsafe fn abandon<T>(buffer: NonNull<RingBuffer<T>>) {
-    // The other thread must not access `is_abandoned` after it's deleted in this thread.
-    // This is accomplished with Acquire/Release.
+    // The two threads (producer and consumer) must observe the same order of accesses
+    // to `is_abandoned`.  This is accomplished with Acquire/Release.
     if buffer
         .as_ref()
         .is_abandoned
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_err()
+        .is_ok()
     {
+        // The flag wasn't set before, so we are the first to abandon the RingBuffer
+        // and it should not be dropped yet.
+    } else {
+        // The flag was already set, i.e. the other thread has already abandoned
+        // the RingBuffer and it can be dropped now.
         drop_slow(buffer);
     }
 }
@@ -262,12 +267,11 @@ unsafe fn abandon<T>(buffer: NonNull<RingBuffer<T>>) {
 /// Non-inlined part of `abandon()`.
 #[inline(never)]
 unsafe fn drop_slow<T>(buffer: NonNull<RingBuffer<T>>) {
-    // Turn the pointer into a Box and immediately drop it.
+    // Turn the pointer into a Box and immediately drop it,
+    // which deallocates the memory allocated in `RingBuffer::new()`.
     //
     // SAFETY: This is allowed because the RingBuffer has been allocated with the
-    // Global allocator.
-    // Checking the `is_abandoned` flag makes sure that the RingBuffer is dropped
-    // only once when both producer and consumer are gone.
+    // Global allocator (see `RingBuffer::new()`).
     let _ = alloc::boxed::Box::from_raw(buffer.as_ptr());
 }
 
@@ -352,7 +356,7 @@ unsafe impl<T: Send> Send for Producer<T> {}
 impl<T> Drop for Producer<T> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: The pointer is always valid.
+        // SAFETY: The pointer is valid until after the second call to `abandon()`.
         unsafe { abandon(self.buffer) };
     }
 }
@@ -569,7 +573,7 @@ unsafe impl<T: Send> Send for Consumer<T> {}
 impl<T> Drop for Consumer<T> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: The pointer is always valid.
+        // SAFETY: The pointer is valid until after the second call to `abandon()`.
         unsafe { abandon(self.buffer) };
     }
 }

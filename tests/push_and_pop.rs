@@ -2,10 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rand::{thread_rng, Rng};
 
-/*
 use rtrb::{chunks::ChunkError, RingBuffer};
-*/
-use rtrb::RingBuffer;
 
 #[test]
 fn smoke() {
@@ -41,7 +38,6 @@ fn zero_capacity() {
     assert!(p.push(10).is_err());
     assert!(c.pop().is_err());
 
-    /*
     assert_eq!(p.write_chunk(1).unwrap_err(), ChunkError::TooFewSlots(0));
     assert_eq!(c.read_chunk(1).unwrap_err(), ChunkError::TooFewSlots(0));
 
@@ -62,7 +58,6 @@ fn zero_capacity() {
     } else {
         unreachable!();
     }
-    */
 }
 
 #[test]

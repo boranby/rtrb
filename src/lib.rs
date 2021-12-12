@@ -120,9 +120,9 @@ impl<T> RingBuffer<T> {
     #[must_use]
     pub fn new(capacity: usize) -> (Producer<T>, Consumer<T>) {
         use alloc::alloc::Layout;
-        // Start with an empty layout and add all fields from RingBuffer,
-        // which must have #[repr(C)] for this to work.
+        // Start with an empty layout ...
         let layout = Layout::new::<()>();
+        // ... and add all fields from RingBuffer, which must have #[repr(C)] for this to work.
         let (layout, head_offset) = layout
             .extend(Layout::new::<CachePadded<AtomicUsize>>())
             .unwrap();
@@ -151,7 +151,7 @@ impl<T> RingBuffer<T> {
                 .cast::<AtomicBool>()
                 .write(AtomicBool::new(false));
             // Create a (fat) pointer to a slice ...
-            let ptr: *mut [u8] = core::ptr::slice_from_raw_parts_mut(ptr, capacity);
+            let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr.cast::<T>(), capacity);
             // ... and coerce it into our own dynamically sized type:
             let ptr = ptr as *mut RingBuffer<T>;
             // SAFETY: Null check has been done above
@@ -161,11 +161,13 @@ impl<T> RingBuffer<T> {
             buffer,
             cached_head: Cell::new(0),
             cached_tail: Cell::new(0),
+            _marker: PhantomData,
         };
         let c = Consumer {
             buffer,
             cached_head: Cell::new(0),
             cached_tail: Cell::new(0),
+            _marker: PhantomData,
         };
         (p, c)
     }

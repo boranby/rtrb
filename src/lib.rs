@@ -349,6 +349,9 @@ pub struct Producer<T> {
     ///
     /// This value is always in sync with `buffer.tail`.
     cached_tail: Cell<usize>,
+
+    /// Indicates that dropping a `Producer<T>` may drop a `RingBuffer<T>`.
+    _marker: PhantomData<RingBuffer<T>>,
 }
 
 unsafe impl<T: Send> Send for Producer<T> {}
@@ -566,6 +569,9 @@ pub struct Consumer<T> {
     ///
     /// This value can be stale and sometimes needs to be resynchronized with `buffer.tail`.
     cached_tail: Cell<usize>,
+
+    /// Indicates that dropping a `Consumer<T>` may drop a `RingBuffer<T>`.
+    _marker: PhantomData<RingBuffer<T>>,
 }
 
 unsafe impl<T: Send> Send for Consumer<T> {}

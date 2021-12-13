@@ -91,7 +91,7 @@ pub struct RingBuffer<T> {
     _marker: PhantomData<T>,
 
     /// Storage for the ring buffer elements (dynamically sized).
-    slots: [UnsafeCell<MaybeUninit<T>>],
+    slots: UnsafeCell<[MaybeUninit<T>]>,
 }
 
 impl<T> RingBuffer<T> {
@@ -152,7 +152,7 @@ impl<T> RingBuffer<T> {
             let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr.cast::<T>(), capacity);
             // ... and coerce it into our own dynamically sized type:
             let ptr = ptr as *mut RingBuffer<T>;
-            // SAFETY: Null check has been done above
+            // Safety: Null check has been done above
             NonNull::new_unchecked(ptr)
         };
         let p = Producer {
@@ -184,7 +184,9 @@ impl<T> RingBuffer<T> {
     /// assert_eq!(producer.buffer(), consumer.buffer());
     /// ```
     pub fn capacity(&self) -> usize {
-        self.slots.len()
+        let slice_ptr = self.slots.get();
+        // Safety: We are only accessing the length, which never changes.  Shared access is OK.
+        unsafe { (*slice_ptr).len() }
     }
 
     /// Wraps a position from the range `0 .. 2 * capacity` to `0 .. capacity`.
@@ -197,15 +199,15 @@ impl<T> RingBuffer<T> {
         }
     }
 
-    /// Returns a pointer to the slot at position `pos`.
+    /// Returns a pointer to the (possibly uninitialized) slot at position `pos`.
     ///
     /// If `pos == 0 && capacity == 0`, the returned pointer must not be dereferenced!
     unsafe fn slot_ptr(&self, pos: usize) -> *mut T {
         debug_assert!(pos == 0 || pos < 2 * self.capacity());
-        self.slots
-            .get_unchecked(self.collapse_position(pos))
-            .get()
-            .cast::<T>()
+        let slice_ptr = self.slots.get();
+        (*slice_ptr)
+            .get_unchecked_mut(self.collapse_position(pos))
+            .as_mut_ptr()
     }
 
     /// Increments a position by going `n` slots forward.
@@ -270,7 +272,7 @@ unsafe fn drop_slow<T>(buffer: NonNull<RingBuffer<T>>) {
     // Turn the pointer into a Box and immediately drop it,
     // which deallocates the memory allocated in `RingBuffer::new()`.
     //
-    // SAFETY: This is allowed because the RingBuffer has been allocated with the
+    // Safety: This is allowed because the RingBuffer has been allocated with the
     // Global allocator (see `RingBuffer::new()`).
     let _ = alloc::boxed::Box::from_raw(buffer.as_ptr());
 }
@@ -359,7 +361,7 @@ unsafe impl<T: Send> Send for Producer<T> {}
 impl<T> Drop for Producer<T> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: The pointer is valid until after the second call to `abandon()`.
+        // Safety: The pointer is valid until after the second call to `abandon()`.
         unsafe { abandon(self.buffer) };
     }
 }
@@ -508,7 +510,7 @@ impl<T> Producer<T> {
 
     /// Returns a read-only reference to the ring buffer.
     pub fn buffer(&self) -> &RingBuffer<T> {
-        // SAFETY: The pointer is always valid.
+        // Safety: The pointer is always valid.
         unsafe { self.buffer.as_ref() }
     }
 
@@ -579,7 +581,7 @@ unsafe impl<T: Send> Send for Consumer<T> {}
 impl<T> Drop for Consumer<T> {
     #[inline]
     fn drop(&mut self) {
-        // SAFETY: The pointer is valid until after the second call to `abandon()`.
+        // Safety: The pointer is valid until after the second call to `abandon()`.
         unsafe { abandon(self.buffer) };
     }
 }
@@ -760,7 +762,7 @@ impl<T> Consumer<T> {
 
     /// Returns a read-only reference to the ring buffer.
     pub fn buffer(&self) -> &RingBuffer<T> {
-        // SAFETY: The pointer is always valid
+        // Safety: The pointer is always valid
         unsafe { self.buffer.as_ref() }
     }
 

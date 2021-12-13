@@ -105,7 +105,7 @@
 //!         let mid = first.len();
 //!         slice[..mid].copy_to_uninit(first);
 //!         slice[mid..].copy_to_uninit(second);
-//!         // SAFETY: All slots have been initialized
+//!         // Safety: All slots have been initialized
 //!         unsafe {
 //!             chunk.commit_all();
 //!         }
@@ -135,7 +135,7 @@
 //!     let mid = first.len();
 //!     slice[..mid].copy_to_uninit(first);
 //!     slice[mid..end].copy_to_uninit(second);
-//!     // SAFETY: All slots have been initialized
+//!     // Safety: All slots have been initialized
 //!     unsafe {
 //!         chunk.commit_all();
 //!     }
@@ -254,13 +254,11 @@ impl<T> Producer<T> {
         }
         let tail = buffer.collapse_position(tail);
         let first_len = n.min(buffer.capacity() - tail);
-        // SAFETY: All indices are valid.
-        let first_slice = unsafe { buffer.slots.get_unchecked(tail..tail + first_len) };
-        let second_slice = unsafe { buffer.slots.get_unchecked(0..n - first_len) };
-        // SAFETY: Since we know we have exclusive access and
-        // the two slices are non-overlapping, we can make them mutable.
-        let first_slice = unsafe { &mut *(first_slice as *const _ as *mut _) };
-        let second_slice = unsafe { &mut *(second_slice as *const _ as *mut _) };
+        let slice_ptr = buffer.slots.get();
+        // Safety: All indices are valid.  Since we know we have exclusive access
+        // to the sub-slices and they are non-overlapping, we can make them mutable.
+        let first_slice = unsafe { (*slice_ptr).get_unchecked_mut(tail..tail + first_len) };
+        let second_slice = unsafe { (*slice_ptr).get_unchecked_mut(0..n - first_len) };
         Ok(WriteChunkUninit {
             first_slice,
             second_slice,
@@ -309,13 +307,11 @@ impl<T> Consumer<T> {
         }
         let head = buffer.collapse_position(head);
         let first_len = n.min(buffer.capacity() - head);
-        // SAFETY: All indices are valid.
-        let first_slice = unsafe { buffer.slots.get_unchecked(head..head + first_len) };
-        let second_slice = unsafe { buffer.slots.get_unchecked(0..n - first_len) };
-        // SAFETY: Since we know we have exclusive access and
-        // the two slices are non-overlapping, we can make them mutable.
-        let first_slice = unsafe { &mut *(first_slice as *const _ as *mut _) };
-        let second_slice = unsafe { &mut *(second_slice as *const _ as *mut _) };
+        let slice_ptr = buffer.slots.get();
+        // Safety: All indices are valid.  Since we know we have exclusive access
+        // to the sub-slices and they are non-overlapping, we can make them mutable.
+        let first_slice = unsafe { (*slice_ptr).get_unchecked_mut(head..head + first_len) };
+        let second_slice = unsafe { (*slice_ptr).get_unchecked_mut(0..n - first_len) };
         Ok(ReadChunk {
             first_slice,
             second_slice,
@@ -536,24 +532,18 @@ impl<T> WriteChunkUninit<'_, T> {
     where
         I: IntoIterator<Item = T>,
     {
-        let mut iter = iter.into_iter();
-        let mut iterated = 0;
-        for slot in self
+        let iterated = self
             .first_slice
             .iter_mut()
             .chain(self.second_slice.iter_mut())
-        {
-            match iter.next() {
-                Some(item) => {
-                    // Safety: It is allowed to write to this memory slot
-                    unsafe {
-                        slot.as_mut_ptr().write(item);
-                    }
-                    iterated += 1;
+            .zip(iter)
+            .map(|(slot, item)| {
+                // Safety: It is allowed to write to this memory slot
+                unsafe {
+                    slot.as_mut_ptr().write(item);
                 }
-                None => break,
-            }
-        }
+            })
+            .count();
         // Safety: iterated slots have been initialized above
         unsafe { self.commit_unchecked(iterated) }
     }
@@ -607,7 +597,7 @@ impl<T> ReadChunk<'_, T> {
     /// You can "peek" at the contained values by simply not calling any of the "commit" methods.
     #[must_use]
     pub fn as_slices(&self) -> (&[T], &[T]) {
-        // SAFETY: All slots are initialized.
+        // Safety: All slots are initialized.
         unsafe {
             (
                 &*(self.first_slice as *const _ as *const _),
@@ -680,7 +670,12 @@ impl<T> ReadChunk<'_, T> {
     }
 
     unsafe fn commit_unchecked(self, n: usize) -> usize {
-        for slot in self.first_slice.iter_mut().chain(self.second_slice).take(n) {
+        for slot in self
+            .first_slice
+            .iter_mut()
+            .chain(self.second_slice.iter_mut())
+            .take(n)
+        {
             slot.as_mut_ptr().drop_in_place();
         }
         let c: &_ = self.consumer;

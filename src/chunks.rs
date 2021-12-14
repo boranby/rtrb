@@ -704,6 +704,7 @@ impl<'a, T> IntoIterator for ReadChunk<'a, T> {
     /// Non-iterated items remain in the ring buffer.
     fn into_iter(self) -> Self::IntoIter {
         Self::IntoIter {
+            chunk_size: self.len(),
             iter: self
                 .first_slice
                 .iter_mut()
@@ -722,6 +723,7 @@ impl<'a, T> IntoIterator for ReadChunk<'a, T> {
 /// Non-iterated items remain in the ring buffer.
 #[derive(Debug)]
 pub struct ReadChunkIntoIter<'a, T> {
+    chunk_size: usize,
     iter: core::iter::Chain<
         core::slice::IterMut<'a, MaybeUninit<T>>,
         core::slice::IterMut<'a, MaybeUninit<T>>,
@@ -734,12 +736,8 @@ impl<'a, T> Drop for ReadChunkIntoIter<'a, T> {
     ///
     /// Non-iterated items remain in the ring buffer and are *not* dropped.
     fn drop(&mut self) {
+        let iterated = self.chunk_size - self.len();
         let c = &self.consumer;
-        // NB: self.iter implements TrustedLen
-        let iterated = match self.iter.size_hint() {
-            (_, None) => unreachable!(),
-            (size, _) => self.len() - size,
-        };
         let head = c.buffer().increment(c.cached_head.get(), iterated);
         c.buffer().head.store(head, Ordering::Release);
         c.cached_head.set(head);

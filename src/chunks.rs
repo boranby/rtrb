@@ -708,7 +708,6 @@ impl<'a, T> IntoIterator for ReadChunk<'a, T> {
                 .first_slice
                 .iter_mut()
                 .chain(self.second_slice.iter_mut()),
-            iterated: 0,
             consumer: self.consumer,
         }
     }
@@ -727,7 +726,6 @@ pub struct ReadChunkIntoIter<'a, T> {
         core::slice::IterMut<'a, MaybeUninit<T>>,
         core::slice::IterMut<'a, MaybeUninit<T>>,
     >,
-    iterated: usize,
     consumer: &'a mut Consumer<T>,
 }
 
@@ -737,7 +735,12 @@ impl<'a, T> Drop for ReadChunkIntoIter<'a, T> {
     /// Non-iterated items remain in the ring buffer and are *not* dropped.
     fn drop(&mut self) {
         let c = &self.consumer;
-        let head = c.buffer().increment(c.cached_head.get(), self.iterated);
+        // NB: self.iter implements TrustedLen
+        let iterated = match self.iter.size_hint() {
+            (_, None) => unreachable!(),
+            (size, _) => self.len() - size,
+        };
+        let head = c.buffer().increment(c.cached_head.get(), iterated);
         c.buffer().head.store(head, Ordering::Release);
         c.cached_head.set(head);
     }
@@ -747,13 +750,7 @@ impl<'a, T> Iterator for ReadChunkIntoIter<'a, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        match self.iter.next() {
-            Some(slot) => {
-                self.iterated += 1;
-                Some(unsafe { slot.as_ptr().read() })
-            }
-            None => None,
-        }
+        self.iter.next().map(|slot| unsafe { slot.as_ptr().read() })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {

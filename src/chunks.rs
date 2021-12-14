@@ -422,9 +422,7 @@ pub struct WriteChunkUninit<'a, T> {
 
 impl<T> PartialEq for WriteChunkUninit<'_, T> {
     fn eq(&self, other: &Self) -> bool {
-        core::ptr::eq(self.first_slice, other.first_slice)
-            && core::ptr::eq(self.second_slice, other.second_slice)
-            && core::ptr::eq(self.producer, other.producer)
+        core::ptr::eq(self, other)
     }
 }
 
@@ -575,9 +573,7 @@ pub struct ReadChunk<'a, T> {
 
 impl<T> PartialEq for ReadChunk<'_, T> {
     fn eq(&self, other: &Self) -> bool {
-        core::ptr::eq(self.first_slice, other.first_slice)
-            && core::ptr::eq(self.second_slice, other.second_slice)
-            && core::ptr::eq(self.consumer, other.consumer)
+        core::ptr::eq(self, other)
     }
 }
 

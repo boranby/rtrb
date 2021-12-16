@@ -336,14 +336,13 @@ where
 {
     /// Fills all slots with the [`Default`] value.
     fn from(chunk: WriteChunkUninit<'a, T>) -> Self {
-        for slot in chunk
-            .first_slice
-            .iter_mut()
-            .chain(chunk.second_slice.iter_mut())
-        {
-            unsafe {
-                slot.as_mut_ptr().write(Default::default());
-            }
+        // NB: Using Iterator::chain() to iterate over both slices
+        //     led to worse optimization (with rustc 1.57).
+        for slot in chunk.first_slice.iter_mut() {
+            *slot = MaybeUninit::new(Default::default());
+        }
+        for slot in chunk.second_slice.iter_mut() {
+            *slot = MaybeUninit::new(Default::default());
         }
         WriteChunk(chunk)
     }

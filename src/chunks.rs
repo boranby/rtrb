@@ -717,12 +717,8 @@ impl<'a, T> IntoIterator for ReadChunk<'a, T> {
     /// Non-iterated items remain in the ring buffer.
     fn into_iter(self) -> Self::IntoIter {
         Self::IntoIter {
-            chunk_size: self.len(),
-            iter: self
-                .first_slice
-                .iter_mut()
-                .chain(self.second_slice.iter_mut()),
-            consumer: self.consumer,
+            chunk: self,
+            iterated: 0,
         }
     }
 }
@@ -736,12 +732,8 @@ impl<'a, T> IntoIterator for ReadChunk<'a, T> {
 /// Non-iterated items remain in the ring buffer.
 #[derive(Debug)]
 pub struct ReadChunkIntoIter<'a, T> {
-    chunk_size: usize,
-    iter: core::iter::Chain<
-        core::slice::IterMut<'a, MaybeUninit<T>>,
-        core::slice::IterMut<'a, MaybeUninit<T>>,
-    >,
-    consumer: &'a mut Consumer<T>,
+    chunk: ReadChunk<'a, T>,
+    iterated: usize,
 }
 
 impl<'a, T> Drop for ReadChunkIntoIter<'a, T> {
@@ -749,9 +741,8 @@ impl<'a, T> Drop for ReadChunkIntoIter<'a, T> {
     ///
     /// Non-iterated items remain in the ring buffer and are *not* dropped.
     fn drop(&mut self) {
-        let iterated = self.chunk_size - self.len();
-        let c = &self.consumer;
-        let head = c.buffer().increment(c.cached_head.get(), iterated);
+        let c = &self.chunk.consumer;
+        let head = c.buffer().increment(c.cached_head.get(), self.iterated);
         c.buffer().head.store(head, Ordering::Release);
         c.cached_head.set(head);
     }
@@ -761,11 +752,24 @@ impl<'a, T> Iterator for ReadChunkIntoIter<'a, T> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(|slot| unsafe { slot.as_ptr().read() })
+        self.chunk
+            .first_slice
+            .get(self.iterated)
+            .or_else(|| {
+                self.chunk
+                    .second_slice
+                    .get(self.iterated - self.chunk.first_slice.len())
+            })
+            .map(|slot| unsafe { slot.as_ptr().read() })
+            .map(|item| {
+                self.iterated += 1;
+                item
+            })
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.iter.size_hint()
+        let size = self.chunk.first_slice.len() + self.chunk.second_slice.len();
+        (size, Some(size))
     }
 }
 

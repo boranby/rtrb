@@ -530,22 +530,32 @@ impl<T> WriteChunkUninit<'_, T> {
         I: IntoIterator<Item = T>,
     {
         let mut iter = iter.into_iter();
-        let mut iterated = self
-            .first_slice
-            .iter_mut()
-            .zip(&mut iter)
-            .map(|(slot, item)| {
-                *slot = MaybeUninit::new(item);
-            })
-            .count();
-        iterated += self
-            .second_slice
-            .iter_mut()
-            .zip(iter)
-            .map(|(slot, item)| {
-                *slot = MaybeUninit::new(item);
-            })
-            .count();
+        let mut iterated = 0;
+        // NB: Iterating over slices (instead of using pointers)
+        //     led to worse optimization (with rustc 1.57).
+        'outer: for &(ptr, len) in &[
+            (
+                self.first_slice.as_mut_ptr().cast::<T>(),
+                self.first_slice.len(),
+            ),
+            (
+                self.second_slice.as_mut_ptr().cast::<T>(),
+                self.second_slice.len(),
+            ),
+        ] {
+            for i in 0..len {
+                match iter.next() {
+                    Some(item) => {
+                        // Safety: It is allowed to write to this memory slot
+                        unsafe {
+                            ptr.add(i).write(item);
+                        }
+                        iterated += 1;
+                    }
+                    None => break 'outer,
+                }
+            }
+        }
         // Safety: iterated slots have been initialized above
         unsafe { self.commit_unchecked(iterated) }
     }

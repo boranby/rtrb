@@ -529,16 +529,21 @@ impl<T> WriteChunkUninit<'_, T> {
     where
         I: IntoIterator<Item = T>,
     {
-        let iterated = self
+        let mut iter = iter.into_iter();
+        let mut iterated = self
             .first_slice
             .iter_mut()
-            .chain(self.second_slice.iter_mut())
+            .zip(&mut iter)
+            .map(|(slot, item)| {
+                *slot = MaybeUninit::new(item);
+            })
+            .count();
+        iterated += self
+            .second_slice
+            .iter_mut()
             .zip(iter)
             .map(|(slot, item)| {
-                // Safety: It is allowed to write to this memory slot
-                unsafe {
-                    slot.as_mut_ptr().write(item);
-                }
+                *slot = MaybeUninit::new(item);
             })
             .count();
         // Safety: iterated slots have been initialized above

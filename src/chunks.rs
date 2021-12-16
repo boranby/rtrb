@@ -680,14 +680,13 @@ impl<T> ReadChunk<'_, T> {
     }
 
     unsafe fn commit_unchecked(self, n: usize) -> usize {
-        for slot in self
-            .first_slice
+        self.first_slice
             .iter_mut()
             .chain(self.second_slice.iter_mut())
             .take(n)
-        {
-            slot.as_mut_ptr().drop_in_place();
-        }
+            .for_each(|slot| {
+                slot.as_mut_ptr().drop_in_place();
+            });
         let c: &_ = self.consumer;
         let head = c.buffer().increment(c.cached_head.get(), n);
         c.buffer().head.store(head, Ordering::Release);

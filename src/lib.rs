@@ -74,6 +74,21 @@ use chunks::WriteChunkUninit;
 #[derive(Debug)]
 #[repr(C)]
 pub struct RingBuffer<T> {
+    /// Fixed size metadata.
+    meta: MetaData,
+
+    /// Indicates that dropping a `RingBuffer<T>` may drop elements of type `T`.
+    _marker: PhantomData<T>,
+
+    /// Storage for the ring buffer elements (dynamically sized).
+    slots: UnsafeCell<[MaybeUninit<T>]>,
+}
+
+/// Statically-sized part of the RingBuffer.
+///
+/// This is a separate `struct` to simplify memory allocation.
+#[derive(Debug)]
+struct MetaData {
     /// The head of the queue.
     ///
     /// This integer is in range `0 .. 2 * capacity`.
@@ -86,12 +101,6 @@ pub struct RingBuffer<T> {
 
     /// `true` if one of producer/consumer has been dropped.
     is_abandoned: AtomicBool,
-
-    /// Indicates that dropping a `RingBuffer<T>` may drop elements of type `T`.
-    _marker: PhantomData<T>,
-
-    /// Storage for the ring buffer elements (dynamically sized).
-    slots: UnsafeCell<[MaybeUninit<T>]>,
 }
 
 impl<T> RingBuffer<T> {
@@ -118,17 +127,8 @@ impl<T> RingBuffer<T> {
     #[must_use]
     pub fn new(capacity: usize) -> (Producer<T>, Consumer<T>) {
         use alloc::alloc::Layout;
-        // Start with an empty layout ...
-        let layout = Layout::new::<()>();
-        // ... and add all fields from RingBuffer, which must have #[repr(C)] for this to work.
-        let (layout, head_offset) = layout
-            .extend(Layout::new::<CachePadded<AtomicUsize>>())
-            .unwrap();
-        assert_eq!(head_offset, 0);
-        let (layout, tail_offset) = layout
-            .extend(Layout::new::<CachePadded<AtomicUsize>>())
-            .unwrap();
-        let (layout, is_abandoned_offset) = layout.extend(Layout::new::<AtomicBool>()).unwrap();
+        let layout = Layout::new::<MetaData>();
+        // RingBuffer must have #[repr(C)] for this to work.
         let (layout, _slots_offset) = layout
             .extend(Layout::array::<T>(capacity).unwrap())
             .unwrap();
@@ -139,15 +139,11 @@ impl<T> RingBuffer<T> {
             if ptr.is_null() {
                 alloc::alloc::handle_alloc_error(layout);
             }
-            ptr.add(head_offset)
-                .cast::<CachePadded<AtomicUsize>>()
-                .write(CachePadded::new(AtomicUsize::new(0)));
-            ptr.add(tail_offset)
-                .cast::<CachePadded<AtomicUsize>>()
-                .write(CachePadded::new(AtomicUsize::new(0)));
-            ptr.add(is_abandoned_offset)
-                .cast::<AtomicBool>()
-                .write(AtomicBool::new(false));
+            ptr.cast::<MetaData>().write(MetaData {
+                head: CachePadded::new(AtomicUsize::new(0)),
+                tail: CachePadded::new(AtomicUsize::new(0)),
+                is_abandoned: AtomicBool::new(false),
+            });
             // Create a (fat) pointer to a slice ...
             let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr.cast::<T>(), capacity);
             // ... and coerce it into our own dynamically sized type:
@@ -253,6 +249,7 @@ unsafe fn abandon<T>(buffer: NonNull<RingBuffer<T>>) {
     // to `is_abandoned`.  This is accomplished with Acquire/Release.
     if buffer
         .as_ref()
+        .meta
         .is_abandoned
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_ok()
@@ -282,8 +279,8 @@ impl<T> Drop for RingBuffer<T> {
     fn drop(&mut self) {
         // The threads have already been synchronized in `abandon()`,
         // Relaxed ordering is sufficient here.
-        let mut head = self.head.load(Ordering::Relaxed);
-        let tail = self.tail.load(Ordering::Relaxed);
+        let mut head = self.meta.head.load(Ordering::Relaxed);
+        let tail = self.meta.tail.load(Ordering::Relaxed);
 
         // Loop over all slots that hold a value and drop them.
         while head != tail {
@@ -393,7 +390,7 @@ impl<T> Producer<T> {
                 buffer.slot_ptr(tail).write(value);
             }
             let tail = buffer.increment1(tail);
-            buffer.tail.store(tail, Ordering::Release);
+            buffer.meta.tail.store(tail, Ordering::Release);
             self.cached_tail.set(tail);
             Ok(())
         } else {
@@ -421,7 +418,7 @@ impl<T> Producer<T> {
     /// ```
     pub fn slots(&self) -> usize {
         let buffer = self.buffer();
-        let head = buffer.head.load(Ordering::Acquire);
+        let head = buffer.meta.head.load(Ordering::Acquire);
         self.cached_head.set(head);
         buffer.capacity() - buffer.distance(head, self.cached_tail.get())
     }
@@ -505,7 +502,7 @@ impl<T> Producer<T> {
     /// }
     /// ```
     pub fn is_abandoned(&self) -> bool {
-        self.buffer().is_abandoned.load(Ordering::Acquire)
+        self.buffer().meta.is_abandoned.load(Ordering::Acquire)
     }
 
     /// Returns a read-only reference to the ring buffer.
@@ -525,7 +522,7 @@ impl<T> Producer<T> {
         // Check if the queue is *possibly* full.
         if buffer.distance(self.cached_head.get(), tail) == buffer.capacity() {
             // Refresh the head ...
-            let head = buffer.head.load(Ordering::Acquire);
+            let head = buffer.meta.head.load(Ordering::Acquire);
             self.cached_head.set(head);
 
             // ... and check if it's *really* full.
@@ -621,7 +618,7 @@ impl<T> Consumer<T> {
             let buffer = self.buffer();
             let value = unsafe { buffer.slot_ptr(head).read() };
             let head = buffer.increment1(head);
-            buffer.head.store(head, Ordering::Release);
+            buffer.meta.head.store(head, Ordering::Release);
             self.cached_head.set(head);
             Ok(value)
         } else {
@@ -674,7 +671,7 @@ impl<T> Consumer<T> {
     /// assert_eq!(c.slots(), 0);
     /// ```
     pub fn slots(&self) -> usize {
-        let tail = self.buffer().tail.load(Ordering::Acquire);
+        let tail = self.buffer().meta.tail.load(Ordering::Acquire);
         self.cached_tail.set(tail);
         self.buffer().distance(self.cached_head.get(), tail)
     }
@@ -757,7 +754,7 @@ impl<T> Consumer<T> {
     /// }
     /// ```
     pub fn is_abandoned(&self) -> bool {
-        self.buffer().is_abandoned.load(Ordering::Acquire)
+        self.buffer().meta.is_abandoned.load(Ordering::Acquire)
     }
 
     /// Returns a read-only reference to the ring buffer.
@@ -776,7 +773,7 @@ impl<T> Consumer<T> {
         // Check if the queue is *possibly* empty.
         if head == self.cached_tail.get() {
             // Refresh the tail ...
-            let tail = self.buffer().tail.load(Ordering::Acquire);
+            let tail = self.buffer().meta.tail.load(Ordering::Acquire);
             self.cached_tail.set(tail);
 
             // ... and check if it's *really* empty.

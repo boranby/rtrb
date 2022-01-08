@@ -385,8 +385,8 @@ where
         // Safety: All slots have been initialized in From::from().
         unsafe {
             (
-                &mut *(chunk.first_slice as *mut _ as *mut _),
-                &mut *(chunk.second_slice as *mut _ as *mut _),
+                &mut *(chunk.first_slice as *mut [_] as *mut [T]),
+                &mut *(chunk.second_slice as *mut [_] as *mut [T]),
             )
         }
     }
@@ -657,8 +657,8 @@ impl<T> ReadChunk<'_, T> {
         // Safety: All slots are initialized.
         unsafe {
             (
-                &*(self.first_slice as *const _ as *const _),
-                &*(self.second_slice as *const _ as *const _),
+                &*(self.first_slice as *const [_] as *const [T]),
+                &*(self.second_slice as *const [_] as *const [T]),
             )
         }
     }

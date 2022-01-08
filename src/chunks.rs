@@ -169,6 +169,7 @@
 //! ```
 
 use core::fmt;
+use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 use core::sync::atomic::Ordering;
 
@@ -328,7 +329,7 @@ impl<T> Consumer<T> {
 /// which also allows moving items from an iterator into the ring buffer
 /// by means of [`WriteChunkUninit::fill_from_iter()`].
 #[derive(Debug, PartialEq, Eq)]
-pub struct WriteChunk<'a, T>(Option<WriteChunkUninit<'a, T>>);
+pub struct WriteChunk<'a, T>(Option<WriteChunkUninit<'a, T>>, PhantomData<T>);
 
 impl<T> Drop for WriteChunk<'_, T> {
     fn drop(&mut self) {
@@ -357,7 +358,7 @@ where
         for slot in chunk.second_slice.iter_mut() {
             *slot = MaybeUninit::new(Default::default());
         }
-        WriteChunk(Some(chunk))
+        WriteChunk(Some(chunk), PhantomData)
     }
 }
 

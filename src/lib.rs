@@ -94,6 +94,10 @@ pub struct RingBuffer<T> {
     _marker: PhantomData<T>,
 }
 
+unsafe impl<T: Send> Send for RingBuffer<T> {}
+
+unsafe impl<T: Sync> Sync for RingBuffer<T> {}
+
 impl<T> RingBuffer<T> {
     /// Creates a `RingBuffer` with the given `capacity` and returns [`Producer`] and [`Consumer`].
     ///

@@ -87,7 +87,7 @@ pub struct RingBuffer<T> {
 /// Statically-sized part of the RingBuffer.
 ///
 /// This is a separate `struct` to simplify memory allocation.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct MetaData {
     /// The head of the queue.
     ///
@@ -128,8 +128,7 @@ impl<T> RingBuffer<T> {
     pub fn new(capacity: usize) -> (Producer<T>, Consumer<T>) {
         use alloc::alloc::Layout;
         let layout = Layout::new::<MetaData>();
-        // RingBuffer must have #[repr(C)] for this to work.
-        let (layout, _slots_offset) = layout
+        let (layout, _) = layout
             .extend(Layout::array::<T>(capacity).unwrap())
             .unwrap();
         let layout = layout.pad_to_align();
@@ -139,11 +138,7 @@ impl<T> RingBuffer<T> {
             if ptr.is_null() {
                 alloc::alloc::handle_alloc_error(layout);
             }
-            ptr.cast::<MetaData>().write(MetaData {
-                head: CachePadded::new(AtomicUsize::new(0)),
-                tail: CachePadded::new(AtomicUsize::new(0)),
-                is_abandoned: AtomicBool::new(false),
-            });
+            ptr.cast::<MetaData>().write(Default::default());
             // Create a (fat) pointer to a slice ...
             let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr.cast::<T>(), capacity);
             // ... and coerce it into our own dynamically sized type:

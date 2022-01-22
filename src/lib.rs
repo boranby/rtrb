@@ -50,6 +50,7 @@
 
 extern crate alloc;
 
+use alloc::alloc::Layout;
 use core::cell::{Cell, UnsafeCell};
 use core::fmt;
 use core::marker::PhantomData;
@@ -94,6 +95,61 @@ pub struct RingBuffer<T> {
     slots: UnsafeCell<[MaybeUninit<T>]>,
 }
 
+struct RingBufferLayout {
+    head_offset: usize,
+    tail_offset: usize,
+    is_abandoned_offset: usize,
+    slots_offset: usize,
+    layout: Layout,
+}
+
+impl RingBufferLayout {
+    fn new<T>(capacity: usize) -> Self {
+        // Start with an empty layout ...
+        let layout = Layout::new::<()>();
+        // ... and add all fields from RingBuffer, which must have #[repr(C)] for this to work.
+        let (layout, head_offset) = layout
+            .extend(Layout::new::<CachePadded<AtomicUsize>>())
+            .unwrap();
+        assert_eq!(head_offset, 0);
+        let (layout, tail_offset) = layout
+            .extend(Layout::new::<CachePadded<AtomicUsize>>())
+            .unwrap();
+        let (layout, is_abandoned_offset) = layout.extend(Layout::new::<AtomicBool>()).unwrap();
+        let (layout, slots_offset) = layout
+            .extend(Layout::array::<T>(capacity).unwrap())
+            .unwrap();
+        let layout = layout.pad_to_align();
+        Self {
+            head_offset,
+            tail_offset,
+            is_abandoned_offset,
+            slots_offset,
+            layout,
+        }
+    }
+
+    unsafe fn allocate(&self) -> *mut u8 {
+        let ptr = alloc::alloc::alloc(self.layout);
+        if ptr.is_null() {
+            alloc::alloc::handle_alloc_error(self.layout);
+        }
+        ptr
+    }
+
+    unsafe fn initialize(&self, ptr: *mut u8) {
+        ptr.add(self.head_offset)
+            .cast::<CachePadded<AtomicUsize>>()
+            .write(CachePadded::new(AtomicUsize::new(0)));
+        ptr.add(self.tail_offset)
+            .cast::<CachePadded<AtomicUsize>>()
+            .write(CachePadded::new(AtomicUsize::new(0)));
+        ptr.add(self.is_abandoned_offset)
+            .cast::<AtomicBool>()
+            .write(AtomicBool::new(false));
+    }
+}
+
 impl<T> RingBuffer<T> {
     /// Creates a `RingBuffer` with the given `capacity` and returns [`Producer`] and [`Consumer`].
     ///
@@ -117,37 +173,10 @@ impl<T> RingBuffer<T> {
     #[allow(clippy::new_ret_no_self)]
     #[must_use]
     pub fn new(capacity: usize) -> (Producer<T>, Consumer<T>) {
-        use alloc::alloc::Layout;
-        // Start with an empty layout ...
-        let layout = Layout::new::<()>();
-        // ... and add all fields from RingBuffer, which must have #[repr(C)] for this to work.
-        let (layout, head_offset) = layout
-            .extend(Layout::new::<CachePadded<AtomicUsize>>())
-            .unwrap();
-        assert_eq!(head_offset, 0);
-        let (layout, tail_offset) = layout
-            .extend(Layout::new::<CachePadded<AtomicUsize>>())
-            .unwrap();
-        let (layout, is_abandoned_offset) = layout.extend(Layout::new::<AtomicBool>()).unwrap();
-        let (layout, _slots_offset) = layout
-            .extend(Layout::array::<T>(capacity).unwrap())
-            .unwrap();
-        let layout = layout.pad_to_align();
-
+        let layout = RingBufferLayout::new::<T>(capacity);
         let buffer = unsafe {
-            let ptr = alloc::alloc::alloc(layout);
-            if ptr.is_null() {
-                alloc::alloc::handle_alloc_error(layout);
-            }
-            ptr.add(head_offset)
-                .cast::<CachePadded<AtomicUsize>>()
-                .write(CachePadded::new(AtomicUsize::new(0)));
-            ptr.add(tail_offset)
-                .cast::<CachePadded<AtomicUsize>>()
-                .write(CachePadded::new(AtomicUsize::new(0)));
-            ptr.add(is_abandoned_offset)
-                .cast::<AtomicBool>()
-                .write(AtomicBool::new(false));
+            let ptr = layout.allocate();
+            layout.initialize(ptr);
             // Create a (fat) pointer to a slice ...
             let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr.cast::<T>(), capacity);
             // ... and coerce it into our own dynamically sized type:

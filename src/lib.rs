@@ -139,19 +139,22 @@ impl<T> RingBuffer<T> {
             if ptr.is_null() {
                 alloc::alloc::handle_alloc_error(layout);
             }
-            ptr.add(head_offset)
-                .cast::<CachePadded<AtomicUsize>>()
-                .write(CachePadded::new(AtomicUsize::new(0)));
-            ptr.add(tail_offset)
-                .cast::<CachePadded<AtomicUsize>>()
-                .write(CachePadded::new(AtomicUsize::new(0)));
-            ptr.add(is_abandoned_offset)
-                .cast::<AtomicBool>()
-                .write(AtomicBool::new(false));
             // Create a (fat) pointer to a slice ...
             let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr.cast(), capacity);
             // ... and coerce it into our own dynamically sized type:
             let ptr = ptr as *mut Self;
+
+            macro_rules! initialize_field {
+                ($ptr:ident.$field:ident, $offset:expr) => {
+                    let field_ptr = core::ptr::addr_of_mut!((*$ptr).$field);
+                    assert_eq!(field_ptr.cast::<u8>(), $ptr.cast::<u8>().add($offset));
+                    field_ptr.write(Default::default());
+                };
+            }
+
+            initialize_field!(ptr.head, head_offset);
+            initialize_field!(ptr.tail, tail_offset);
+            initialize_field!(ptr.is_abandoned, is_abandoned_offset);
             // Safety: Null check has been done above
             NonNull::new_unchecked(ptr)
         };

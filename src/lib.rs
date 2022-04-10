@@ -65,33 +65,38 @@ pub mod chunks;
 #[allow(unused_imports)]
 use chunks::WriteChunkUninit;
 
-/// A bounded single-producer single-consumer (SPSC) queue.
-///
-/// Elements can be written with a [`Producer`] and read with a [`Consumer`],
-/// both of which can be obtained with [`RingBuffer::new()`].
-///
-/// *See also the [crate-level documentation](crate).*
-#[derive(Debug)]
-#[repr(C)]
-pub struct RingBuffer<T> {
-    /// The head of the queue.
+#[macro_use]
+mod ring_buffer_instantiation;
+
+ring_buffer_instantiation! {
+    /// A bounded single-producer single-consumer (SPSC) queue.
     ///
-    /// This integer is in range `0 .. 2 * capacity`.
-    head: CachePadded<AtomicUsize>,
-
-    /// The tail of the queue.
+    /// Elements can be written with a [`Producer`] and read with a [`Consumer`],
+    /// both of which can be obtained with [`RingBuffer::new()`].
     ///
-    /// This integer is in range `0 .. 2 * capacity`.
-    tail: CachePadded<AtomicUsize>,
+    /// *See also the [crate-level documentation](crate).*
+    #[derive(Debug)]
+    #[repr(C)]
+    pub struct RingBuffer<T> {
+        /// The head of the queue.
+        ///
+        /// This integer is in range `0 .. 2 * capacity`.
+        head: CachePadded<AtomicUsize>,
 
-    /// `true` if one of producer/consumer has been dropped.
-    is_abandoned: AtomicBool,
+        /// The tail of the queue.
+        ///
+        /// This integer is in range `0 .. 2 * capacity`.
+        tail: CachePadded<AtomicUsize>,
 
-    /// Indicates that dropping a `RingBuffer<T>` may drop elements of type `T`.
-    _marker: PhantomData<T>,
+        /// `true` if one of producer/consumer has been dropped.
+        is_abandoned: AtomicBool,
 
-    /// Storage for the ring buffer elements (dynamically sized).
-    slots: UnsafeCell<[MaybeUninit<T>]>,
+        /// Indicates that dropping a `RingBuffer<T>` may drop elements of type `T`.
+        _marker: PhantomData<T>,
+
+        /// Storage for the ring buffer elements (dynamically sized).
+        slots: UnsafeCell<[MaybeUninit<T>]>,
+    }
 }
 
 impl<T> RingBuffer<T> {
@@ -117,44 +122,8 @@ impl<T> RingBuffer<T> {
     #[allow(clippy::new_ret_no_self)]
     #[must_use]
     pub fn new(capacity: usize) -> (Producer<T>, Consumer<T>) {
-        use alloc::alloc::Layout;
-        // Start with an empty layout ...
-        let layout = Layout::new::<()>();
-        // ... and add all fields from RingBuffer, which must have #[repr(C)] for this to work.
-        let (layout, head_offset) = layout
-            .extend(Layout::new::<CachePadded<AtomicUsize>>())
-            .unwrap();
-        assert_eq!(head_offset, 0);
-        let (layout, tail_offset) = layout
-            .extend(Layout::new::<CachePadded<AtomicUsize>>())
-            .unwrap();
-        let (layout, is_abandoned_offset) = layout.extend(Layout::new::<AtomicBool>()).unwrap();
-        let (layout, _slots_offset) = layout
-            .extend(Layout::array::<T>(capacity).unwrap())
-            .unwrap();
-        let layout = layout.pad_to_align();
-
-        let buffer = unsafe {
-            let ptr = alloc::alloc::alloc(layout);
-            if ptr.is_null() {
-                alloc::alloc::handle_alloc_error(layout);
-            }
-            ptr.add(head_offset)
-                .cast::<CachePadded<AtomicUsize>>()
-                .write(CachePadded::new(AtomicUsize::new(0)));
-            ptr.add(tail_offset)
-                .cast::<CachePadded<AtomicUsize>>()
-                .write(CachePadded::new(AtomicUsize::new(0)));
-            ptr.add(is_abandoned_offset)
-                .cast::<AtomicBool>()
-                .write(AtomicBool::new(false));
-            // Create a (fat) pointer to a slice ...
-            let ptr: *mut [T] = core::ptr::slice_from_raw_parts_mut(ptr.cast(), capacity);
-            // ... and coerce it into our own dynamically sized type:
-            let ptr = ptr as *mut Self;
-            // Safety: Null check has been done above
-            NonNull::new_unchecked(ptr)
-        };
+        // NB: Self::instantiate() has been defined with the ring_buffer_instantiation! macro.
+        let buffer = Self::instantiate(capacity);
         let p = Producer {
             buffer,
             cached_head: Cell::new(0),

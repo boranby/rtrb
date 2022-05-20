@@ -62,14 +62,6 @@ fn criterion_benchmark(criterion: &mut criterion::Criterion) {
         |c| c.pop().ok(),
     );
 
-    add_function(
-        &mut group,
-        "-spsc-bounded-queue",
-        bounded_spsc_queue::make,
-        |p, i| p.try_push(i).is_none(),
-        |c| c.try_pop(),
-    );
-
     group.finish();
 }
 

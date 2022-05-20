@@ -12,7 +12,6 @@ crossbeam-queue-pr338 = { git = "https://github.com/mgeier/crossbeam", branch = 
 npnc = "0.2"
 ringbuf = "0.2"
 rtrb = { path = ".." }
-spsc-bounded-queue = "0.0.1"
 
 [dev-dependencies]
 criterion = "0.3"

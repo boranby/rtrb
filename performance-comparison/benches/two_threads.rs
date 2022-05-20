@@ -38,6 +38,19 @@ fn criterion_benchmark(criterion: &mut criterion::Criterion) {
         |q| q.pop().ok(),
     );
 
+    use magnetic::{Consumer, Producer};
+
+    add_function(
+        &mut group,
+        "-magnetic",
+        |capacity| {
+            let buffer = magnetic::buffer::dynamic::DynamicBuffer::new(capacity).unwrap();
+            magnetic::spsc::spsc_queue(buffer)
+        },
+        |p, i| p.try_push(i).is_ok(),
+        |c| c.try_pop().ok(),
+    );
+
     add_function(
         &mut group,
         "-npnc",

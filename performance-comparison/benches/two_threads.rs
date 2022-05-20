@@ -10,29 +10,23 @@ fn criterion_benchmark(criterion: &mut criterion::Criterion) {
 
     add_function(
         &mut group,
-        "-concurrent-queue",
-        |capacity| {
-            let q = std::sync::Arc::new(concurrent_queue::ConcurrentQueue::bounded(capacity));
-            (q.clone(), q)
-        },
-        |q, i| q.push(i).is_ok(),
-        |q| q.pop().ok(),
+        "-0-npnc",
+        |capacity| npnc::bounded::spsc::channel(capacity.next_power_of_two()),
+        |p, i| p.produce(i).is_ok(),
+        |c| c.consume().ok(),
     );
 
     add_function(
         &mut group,
-        "-crossbeam-queue",
-        |capacity| {
-            let q = std::sync::Arc::new(crossbeam_queue::ArrayQueue::new(capacity));
-            (q.clone(), q)
-        },
-        |q, i| q.push(i).is_ok(),
-        |q| q.pop(),
+        "-1-rtrb",
+        rtrb::RingBuffer::new,
+        |p, i| p.push(i).is_ok(),
+        |c| c.pop().ok(),
     );
 
     add_function(
         &mut group,
-        "-crossbeam-queue-pr338",
+        "-1-crossbeam-queue-pr338",
         crossbeam_queue_pr338::spsc::new,
         |q, i| q.push(i).is_ok(),
         |q| q.pop().ok(),
@@ -42,7 +36,7 @@ fn criterion_benchmark(criterion: &mut criterion::Criterion) {
 
     add_function(
         &mut group,
-        "-magnetic",
+        "-2-magnetic",
         |capacity| {
             let buffer = magnetic::buffer::dynamic::DynamicBuffer::new(capacity).unwrap();
             magnetic::spsc::spsc_queue(buffer)
@@ -53,15 +47,7 @@ fn criterion_benchmark(criterion: &mut criterion::Criterion) {
 
     add_function(
         &mut group,
-        "-npnc",
-        |capacity| npnc::bounded::spsc::channel(capacity.next_power_of_two()),
-        |p, i| p.produce(i).is_ok(),
-        |c| c.consume().ok(),
-    );
-
-    add_function(
-        &mut group,
-        "-ringbuf",
+        "-2-ringbuf",
         |capacity| ringbuf::RingBuffer::new(capacity).split(),
         |p, i| p.push(i).is_ok(),
         |c| c.pop(),
@@ -69,10 +55,24 @@ fn criterion_benchmark(criterion: &mut criterion::Criterion) {
 
     add_function(
         &mut group,
-        "-rtrb",
-        rtrb::RingBuffer::new,
-        |p, i| p.push(i).is_ok(),
-        |c| c.pop().ok(),
+        "-3-concurrent-queue",
+        |capacity| {
+            let q = std::sync::Arc::new(concurrent_queue::ConcurrentQueue::bounded(capacity));
+            (q.clone(), q)
+        },
+        |q, i| q.push(i).is_ok(),
+        |q| q.pop().ok(),
+    );
+
+    add_function(
+        &mut group,
+        "-3-crossbeam-queue",
+        |capacity| {
+            let q = std::sync::Arc::new(crossbeam_queue::ArrayQueue::new(capacity));
+            (q.clone(), q)
+        },
+        |q, i| q.push(i).is_ok(),
+        |q| q.pop(),
     );
 
     group.finish();

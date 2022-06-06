@@ -47,6 +47,14 @@ fn criterion_benchmark(criterion: &mut criterion::Criterion) {
 
     add_function(
         &mut group,
+        "-2-omango",
+        |capacity| omango::spsc::bounded(u32::try_from(capacity).unwrap() - 1),
+        |p, i| p.try_send(i).is_ok(),
+        |c| c.try_recv().ok(),
+    );
+
+    add_function(
+        &mut group,
         "-2-ringbuf",
         |capacity| ringbuf::RingBuffer::new(capacity).split(),
         |p, i| p.push(i).is_ok(),

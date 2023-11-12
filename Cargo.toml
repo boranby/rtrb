@@ -23,6 +23,7 @@ default = ["std"]
 std = []
 
 [dependencies]
+rtrb-base = { path = "rtrb_base" }
 # "std" is enabled by default
 crossbeam-utils = { version = "0.8", default-features = false }
 

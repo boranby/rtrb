@@ -82,6 +82,8 @@ jobs:
       - name: packaging
         run: |
           cargo package --verbose
+      - name: semver
+        uses: obi1kenobi/cargo-semver-checks-action@v2
 
   no_std:
     runs-on: ubuntu-latest

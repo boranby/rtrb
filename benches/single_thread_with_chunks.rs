@@ -1,3 +1,4 @@
+/*
 //! Single-threaded benchmarks, writing and reading chunks.
 //!
 //! Single-threaded usage is *not* a typical use case!
@@ -104,3 +105,4 @@ pub fn criterion_benchmark(criterion: &mut criterion::Criterion) {
 
 criterion_group!(benches, criterion_benchmark);
 criterion_main!(benches);
+*/

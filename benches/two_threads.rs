@@ -95,11 +95,28 @@ fn criterion_benchmark(criterion: &mut criterion::Criterion) {
     let mut group = criterion.benchmark_group("two-threads");
     add_function(
         &mut group,
-        "",
+        "-0-npnc",
+        |capacity| npnc::bounded::spsc::channel(capacity.next_power_of_two()),
+        |p, i| p.produce(i).is_ok(),
+        |c| c.consume().ok(),
+    );
+
+    add_function(
+        &mut group,
+        "-1-rtrb",
         RingBuffer::new,
         |p, i| p.push(i).is_ok(),
         |c| c.pop().ok(),
     );
+
+    add_function(
+        &mut group,
+        "-1-crossbeam-queue-pr338",
+        crossbeam_queue_pr338::spsc::new,
+        |q, i| q.push(i).is_ok(),
+        |q| q.pop().ok(),
+    );
+
     group.finish();
 }
 

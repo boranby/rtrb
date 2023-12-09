@@ -1,3 +1,4 @@
+/*
 //! Single-threaded benchmarks, writing and reading two bytes using a three-element queue.
 //!
 //! This is *not* a typical use case but it should nevertheless be useful
@@ -142,3 +143,4 @@ pub fn criterion_benchmark(criterion: &mut criterion::Criterion) {
 
 criterion_group!(benches, criterion_benchmark);
 criterion_main!(benches);
+*/

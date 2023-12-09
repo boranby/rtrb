@@ -1,3 +1,4 @@
+/*
 //! Single-threaded benchmarks, pushing and popping a single byte using a single-element queue.
 //!
 //! This is *not* a typical use case but it should nevertheless be useful
@@ -45,3 +46,4 @@ pub fn criterion_benchmark(criterion: &mut criterion::Criterion) {
 
 criterion_group!(benches, criterion_benchmark);
 criterion_main!(benches);
+*/

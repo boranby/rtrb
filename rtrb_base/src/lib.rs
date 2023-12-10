@@ -66,7 +66,7 @@ pub trait Storage {
     fn addr(&self) -> &Self::Addr;
 
     fn indices(&self) -> &Self::Indices;
-    
+
     fn drop_all_elements(&mut self) {
         let mut head = self.indices().load_head_relaxed();
         let tail = self.indices().load_tail_relaxed();

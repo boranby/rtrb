@@ -77,10 +77,8 @@ use rtrb_base::{Addressing, Indices, Storage};
 ///
 /// *See also the [crate-level documentation](crate).*
 
-//pub type RingBuffer<T> = rtrb_base::RingBuffer<DynamicStorage<T, TightAddressing>>;
-
 #[derive(Debug, PartialEq, Eq)]
-#[repr(transparent)] // TODO: does that help?
+//#[repr(transparent)] // TODO: does that help?
 pub struct RingBuffer<T> {
     storage: DynamicStorage<T, TightAddressing, CachePaddedIndices>,
 }
@@ -132,12 +130,10 @@ struct CachePaddedIndices {
     /// This integer is in range `0 .. 2 * capacity`.
     head: CachePadded<AtomicUsize>,
 
-    // TODO: store cached_tail here, within CachePadded?
     /// The tail of the queue.
     ///
     /// This integer is in range `0 .. 2 * capacity`.
     tail: CachePadded<AtomicUsize>,
-    // TODO: store cached_head here, within CachePadded?
 }
 
 impl Indices for CachePaddedIndices {

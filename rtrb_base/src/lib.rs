@@ -1,16 +1,7 @@
 #![no_std]
 #![warn(rust_2018_idioms)]
 
-
-// TODO: add separate trait for head/tail indices (e.g. cached vs. non-cached)
-
-// TODO: unsafe trait? or make all methods unsafe?
-pub trait Addressing {
-    //type SizeType;
-    // TODO: AtomicSizeType?
-
-    fn capacity(&self) -> usize;
-
+pub trait Indices {
     fn store_head(&self, head: usize);
 
     // This might be faster than `store_head()`.
@@ -38,6 +29,14 @@ pub trait Addressing {
     fn load_tail_relaxed(&self) -> usize {
         self.load_tail()
     }
+}
+
+// TODO: unsafe trait? or make all methods unsafe?
+pub trait Addressing {
+    //type SizeType;
+    // TODO: AtomicSizeType?
+
+    fn capacity(&self) -> usize;
 
     fn collapse_position(&self, pos: usize) -> usize;
 
@@ -60,14 +59,17 @@ pub trait Addressing {
 pub trait Storage {
     type Item;
     type Addr: Addressing;
+    type Indices: Indices;
 
     fn data_ptr(&self) -> *mut Self::Item;
 
     fn addr(&self) -> &Self::Addr;
+
+    fn indices(&self) -> &Self::Indices;
     
     fn drop_all_elements(&mut self) {
-        let mut head = self.addr().load_head_relaxed();
-        let tail = self.addr().load_tail_relaxed();
+        let mut head = self.indices().load_head_relaxed();
+        let tail = self.indices().load_tail_relaxed();
 
         // Loop over all slots that hold a value and drop them.
         while head != tail {
@@ -78,7 +80,7 @@ pub trait Storage {
         }
         // This is not needed if drop_all_elements() is only called once,
         // but to be safe, we call it anyway:
-        self.addr().store_head_relaxed(head);
+        self.indices().store_head_relaxed(head);
     }
 
     /// Returns a pointer to the slot at position `pos`.

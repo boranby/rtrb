@@ -68,7 +68,7 @@ pub mod chunks;
 use chunks::WriteChunkUninit;
 */
 
-use rtrb_base::{Addressing, Storage};
+use rtrb_base::{Addressing, Indices, Storage};
 
 /// A bounded single-producer single-consumer (SPSC) queue.
 ///
@@ -82,12 +82,13 @@ use rtrb_base::{Addressing, Storage};
 #[derive(Debug, PartialEq, Eq)]
 #[repr(transparent)] // TODO: does that help?
 pub struct RingBuffer<T> {
-    storage: DynamicStorage<T, TightAddressing>,
+    storage: DynamicStorage<T, TightAddressing, CachePaddedIndices>,
 }
 
 #[derive(Debug)]
-struct DynamicStorage<T, A: Addressing> {
+struct DynamicStorage<T, A: Addressing, I: Indices> {
     addr: A,
+    indices: I,
 
     /// The buffer holding slots.
     data_ptr: *mut T,
@@ -96,19 +97,20 @@ struct DynamicStorage<T, A: Addressing> {
     _marker: PhantomData<T>,
 }
 
-impl<T, A: Addressing> PartialEq for DynamicStorage<T, A> {
+impl<T, A: Addressing, I: Indices> PartialEq for DynamicStorage<T, A, I> {
     fn eq(&self, other: &Self) -> bool {
         core::ptr::eq(self, other)
     }
 }
 
-impl<T, A: Addressing> Eq for DynamicStorage<T, A> {}
+impl<T, A: Addressing, I: Indices> Eq for DynamicStorage<T, A, I> {}
 
 // TODO: consider this an "unsafe" impl?
 // all methods must be implemented correctly, or the whole thing is unsound
-impl<T, A: Addressing> Storage for DynamicStorage<T, A> {
+impl<T, A: Addressing, I: Indices> Storage for DynamicStorage<T, A, I> {
     type Item = T;
     type Addr = A;
+    type Indices = I;
 
     fn data_ptr(&self) -> *mut Self::Item {
         self.data_ptr
@@ -117,32 +119,28 @@ impl<T, A: Addressing> Storage for DynamicStorage<T, A> {
     fn addr(&self) -> &Self::Addr {
         &self.addr
     }
+
+    fn indices(&self) -> &Self::Indices {
+        &self.indices
+    }
 }
 
-// TODO: add separate trait for head/tail indices (e.g. cached vs. non-cached).
-//       This way, the CachePadded stuff can stay here,
-//       and the index calculations can be moved to the base crate.
 #[derive(Debug)]
-struct TightAddressing {
+struct CachePaddedIndices {
     /// The head of the queue.
     ///
     /// This integer is in range `0 .. 2 * capacity`.
     head: CachePadded<AtomicUsize>,
 
+    // TODO: store cached_tail here, within CachePadded?
     /// The tail of the queue.
     ///
     /// This integer is in range `0 .. 2 * capacity`.
     tail: CachePadded<AtomicUsize>,
-
-    /// The queue capacity.
-    capacity: usize,
+    // TODO: store cached_head here, within CachePadded?
 }
 
-impl Addressing for TightAddressing {
-    fn capacity(&self) -> usize {
-        self.capacity
-    }
-
+impl Indices for CachePaddedIndices {
     fn store_head(&self, head: usize) {
         self.head.store(head, Ordering::Release)
     }
@@ -175,6 +173,18 @@ impl Addressing for TightAddressing {
 
     fn load_tail_relaxed(&self) -> usize {
         self.tail.load(Ordering::Relaxed)
+    }
+}
+
+#[derive(Debug)]
+struct TightAddressing {
+    /// The queue capacity.
+    capacity: usize,
+}
+
+impl Addressing for TightAddressing {
+    fn capacity(&self) -> usize {
+        self.capacity
     }
 
     /// Wraps a position from the range `0 .. 2 * capacity` to `0 .. capacity`.
@@ -244,10 +254,10 @@ impl<T> RingBuffer<T> {
     pub fn new(capacity: usize) -> (Producer<T>, Consumer<T>) {
         let buffer = Arc::new(RingBuffer {
             storage: DynamicStorage {
-                addr: TightAddressing {
+                addr: TightAddressing { capacity },
+                indices: CachePaddedIndices {
                     head: CachePadded::new(AtomicUsize::new(0)),
                     tail: CachePadded::new(AtomicUsize::new(0)),
-                    capacity,
                 },
                 data_ptr: ManuallyDrop::new(Vec::with_capacity(capacity)).as_mut_ptr(),
                 _marker: PhantomData,
@@ -282,7 +292,7 @@ impl<T> RingBuffer<T> {
     }
 }
 
-impl<T, A: Addressing> Drop for DynamicStorage<T, A> {
+impl<T, A: Addressing, I: Indices> Drop for DynamicStorage<T, A, I> {
     /// Drops all non-empty slots.
     fn drop(&mut self) {
         self.drop_all_elements();
@@ -357,7 +367,7 @@ impl<T> Producer<T> {
                 self.buffer.storage.slot_ptr(tail).write(value);
             }
             let tail = self.buffer.storage.addr().increment1(tail);
-            self.buffer.storage.addr().store_tail(tail);
+            self.buffer.storage.indices().store_tail(tail);
             Ok(())
         } else {
             Err(PushError::Full(value))
@@ -383,10 +393,10 @@ impl<T> Producer<T> {
     /// assert_eq!(p.slots(), 1024);
     /// ```
     pub fn slots(&self) -> usize {
-        let head = self.buffer.storage.addr().load_head();
+        let head = self.buffer.storage.indices().load_head();
         self.cached_head.set(head);
         // "tail" is only ever written by the producer thread, "Relaxed" is enough
-        let tail = self.buffer.storage.addr().load_tail_relaxed();
+        let tail = self.buffer.storage.indices().load_tail_relaxed();
         self.buffer.storage.addr().capacity() - self.buffer.storage.addr().distance(head, tail)
     }
 
@@ -483,7 +493,7 @@ impl<T> Producer<T> {
     /// For performance, this special case is immplemented separately.
     fn next_tail(&self) -> Option<usize> {
         // "tail" is only ever written by the producer thread, "Relaxed" is enough
-        let tail = self.buffer.storage.addr().load_tail_relaxed();
+        let tail = self.buffer.storage.indices().load_tail_relaxed();
 
         // Check if the queue is *possibly* full.
         if self
@@ -494,7 +504,7 @@ impl<T> Producer<T> {
             == self.buffer.storage.addr().capacity()
         {
             // Refresh the head ...
-            let head = self.buffer.storage.addr().load_head();
+            let head = self.buffer.storage.indices().load_head();
             self.cached_head.set(head);
 
             // ... and check if it's *really* full.
@@ -575,7 +585,7 @@ impl<T> Consumer<T> {
         if let Some(head) = self.next_head() {
             let value = unsafe { self.buffer.storage.slot_ptr(head).read() };
             let head = self.buffer.storage.addr().increment1(head);
-            self.buffer.storage.addr().store_head(head);
+            self.buffer.storage.indices().store_head(head);
             Ok(value)
         } else {
             Err(PopError::Empty)
@@ -627,10 +637,10 @@ impl<T> Consumer<T> {
     /// assert_eq!(c.slots(), 0);
     /// ```
     pub fn slots(&self) -> usize {
-        let tail = self.buffer.storage.addr().load_tail();
+        let tail = self.buffer.storage.indices().load_tail();
         self.cached_tail.set(tail);
         // "head" is only ever written by the consumer thread, "Relaxed" is enough
-        let head = self.buffer.storage.addr().load_head_relaxed();
+        let head = self.buffer.storage.indices().load_head_relaxed();
         self.buffer.storage.addr().distance(head, tail)
     }
 
@@ -726,12 +736,12 @@ impl<T> Consumer<T> {
     /// For performance, this special case is immplemented separately.
     fn next_head(&self) -> Option<usize> {
         // "head" is only ever written by the consumer thread, "Relaxed" is enough
-        let head = self.buffer.storage.addr().load_head_relaxed();
+        let head = self.buffer.storage.indices().load_head_relaxed();
 
         // Check if the queue is *possibly* empty.
         if head == self.cached_tail.get() {
             // Refresh the tail ...
-            let tail = self.buffer.storage.addr().load_tail();
+            let tail = self.buffer.storage.indices().load_tail();
             self.cached_tail.set(tail);
 
             // ... and check if it's *really* empty.

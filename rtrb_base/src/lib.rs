@@ -50,6 +50,7 @@ pub trait Addressing {
     /// Increments a position by going one slot forward.
     ///
     /// This might be more efficient than self.increment(..., 1).
+    #[inline]
     fn increment1(&self, pos: usize) -> usize {
         self.increment(pos, 1)
     }
@@ -71,6 +72,7 @@ pub trait Storage {
 
     fn indices(&self) -> &Self::Indices;
 
+    #[inline(never)]
     fn drop_all_elements(&mut self) {
         let mut head = self.indices().load_head_relaxed();
         let tail = self.indices().load_tail_relaxed();

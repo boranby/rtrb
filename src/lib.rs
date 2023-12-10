@@ -155,36 +155,42 @@ impl Indices for CachePaddedIndices {
         }
     }
 
+    #[inline]
     fn store_head(&self, head: usize) {
         self.head.store(head, Ordering::Release)
     }
 
-    // This might be faster than `store_head()`.
+    #[inline]
     fn store_head_relaxed(&self, head: usize) {
         self.head.store(head, Ordering::Relaxed)
     }
 
+    #[inline]
     fn store_tail(&self, tail: usize) {
         self.tail.store(tail, Ordering::Release)
     }
 
-    // This might be faster than `store_tail()`.
+    #[inline]
     fn store_tail_relaxed(&self, tail: usize) {
         self.tail.store(tail, Ordering::Relaxed)
     }
 
+    #[inline]
     fn load_head(&self) -> usize {
         self.head.load(Ordering::Acquire)
     }
 
+    #[inline]
     fn load_head_relaxed(&self) -> usize {
         self.head.load(Ordering::Relaxed)
     }
 
+    #[inline]
     fn load_tail(&self) -> usize {
         self.tail.load(Ordering::Acquire)
     }
 
+    #[inline]
     fn load_tail_relaxed(&self) -> usize {
         self.tail.load(Ordering::Relaxed)
     }
@@ -201,24 +207,27 @@ impl Addressing for TightAddressing {
         Self { capacity }
     }
 
+    #[inline]
     fn capacity(&self) -> usize {
         self.capacity
     }
 
     /// Wraps a position from the range `0 .. 2 * capacity` to `0 .. capacity`.
+    #[inline]
     fn collapse_position(&self, pos: usize) -> usize {
-        debug_assert!(pos == 0 || pos < 2 * self.capacity());
-        if pos < self.capacity() {
+        debug_assert!(pos == 0 || pos < 2 * self.capacity);
+        if pos < self.capacity {
             pos
         } else {
-            pos - self.capacity()
+            pos - self.capacity
         }
     }
 
+    #[inline]
     fn increment(&self, pos: usize, n: usize) -> usize {
-        debug_assert!(pos == 0 || pos < 2 * self.capacity());
-        debug_assert!(n <= self.capacity());
-        let threshold = 2 * self.capacity() - n;
+        debug_assert!(pos == 0 || pos < 2 * self.capacity);
+        debug_assert!(n <= self.capacity);
+        let threshold = 2 * self.capacity - n;
         if pos < threshold {
             pos + n
         } else {
@@ -226,23 +235,25 @@ impl Addressing for TightAddressing {
         }
     }
 
+    #[inline]
     fn increment1(&self, pos: usize) -> usize {
-        debug_assert_ne!(self.capacity(), 0);
-        debug_assert!(pos < 2 * self.capacity());
-        if pos < 2 * self.capacity() - 1 {
+        debug_assert_ne!(self.capacity, 0);
+        debug_assert!(pos < 2 * self.capacity);
+        if pos < 2 * self.capacity - 1 {
             pos + 1
         } else {
             0
         }
     }
 
+    #[inline]
     fn distance(&self, a: usize, b: usize) -> usize {
-        debug_assert!(a == 0 || a < 2 * self.capacity());
-        debug_assert!(b == 0 || b < 2 * self.capacity());
+        debug_assert!(a == 0 || a < 2 * self.capacity);
+        debug_assert!(b == 0 || b < 2 * self.capacity);
         if a <= b {
             b - a
         } else {
-            2 * self.capacity() - a + b
+            2 * self.capacity - a + b
         }
     }
 }
@@ -260,24 +271,29 @@ impl Addressing for PowerOfTwoAddressing {
         }
     }
 
+    #[inline]
     fn capacity(&self) -> usize {
         self.capacity
     }
 
+    #[inline]
     fn collapse_position(&self, pos: usize) -> usize {
         // TODO: is capacity 0 supported?
         pos & (self.capacity - 1)
     }
 
+    #[inline]
     fn increment(&self, pos: usize, n: usize) -> usize {
         pos.wrapping_add(n)
     }
 
     // TODO: this is probably not more efficient?
+    #[inline]
     fn increment1(&self, pos: usize) -> usize {
         pos.wrapping_add(1)
     }
 
+    #[inline]
     fn distance(&self, a: usize, b: usize) -> usize {
         b.wrapping_sub(a)
     }

@@ -179,6 +179,10 @@ struct TightAddressing {
 }
 
 impl Addressing for TightAddressing {
+    fn new(capacity: usize) -> Self {
+        Self { capacity }
+    }
+
     fn capacity(&self) -> usize {
         self.capacity
     }
@@ -225,6 +229,42 @@ impl Addressing for TightAddressing {
     }
 }
 
+#[derive(Debug)]
+struct PowerOfTwoAddressing {
+    /// The queue capacity (a power of 2).
+    capacity: usize,
+}
+
+impl Addressing for PowerOfTwoAddressing {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity: capacity.next_power_of_two(),
+        }
+    }
+
+    fn capacity(&self) -> usize {
+        self.capacity
+    }
+
+    fn collapse_position(&self, pos: usize) -> usize {
+        // TODO: is capacity 0 supported?
+        pos & (self.capacity - 1)
+    }
+
+    fn increment(&self, pos: usize, n: usize) -> usize {
+        pos.wrapping_add(n)
+    }
+
+    // TODO: this is probably not more efficient?
+    fn increment1(&self, pos: usize) -> usize {
+        pos.wrapping_add(1)
+    }
+
+    fn distance(&self, a: usize, b: usize) -> usize {
+        b.wrapping_sub(a)
+    }
+}
+
 impl<T> RingBuffer<T> {
     /// Creates a `RingBuffer` with the given `capacity` and returns [`Producer`] and [`Consumer`].
     ///
@@ -250,7 +290,7 @@ impl<T> RingBuffer<T> {
     pub fn new(capacity: usize) -> (Producer<T>, Consumer<T>) {
         let buffer = Arc::new(RingBuffer {
             storage: DynamicStorage {
-                addr: TightAddressing { capacity },
+                addr: TightAddressing::new(capacity),
                 indices: CachePaddedIndices {
                     head: CachePadded::new(AtomicUsize::new(0)),
                     tail: CachePadded::new(AtomicUsize::new(0)),

@@ -36,6 +36,8 @@ pub trait Addressing {
     //type SizeType;
     // TODO: AtomicSizeType?
 
+    fn new(capacity: usize) -> Self;
+
     fn capacity(&self) -> usize;
 
     fn collapse_position(&self, pos: usize) -> usize;

@@ -2,6 +2,8 @@
 #![warn(rust_2018_idioms)]
 
 pub trait Indices {
+    fn new() -> Self;
+
     fn store_head(&self, head: usize);
 
     // This might be faster than `store_head()`.

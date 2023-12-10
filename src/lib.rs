@@ -95,6 +95,17 @@ struct DynamicStorage<T, A: Addressing, I: Indices> {
     _marker: PhantomData<T>,
 }
 
+impl<T, A: Addressing, I: Indices> DynamicStorage<T, A, I> {
+    fn new(capacity: usize) -> Self {
+        Self {
+            addr: A::new(capacity),
+            indices: I::new(),
+            data_ptr: ManuallyDrop::new(Vec::with_capacity(capacity)).as_mut_ptr(),
+            _marker: PhantomData,
+        }
+    }
+}
+
 impl<T, A: Addressing, I: Indices> PartialEq for DynamicStorage<T, A, I> {
     fn eq(&self, other: &Self) -> bool {
         core::ptr::eq(self, other)
@@ -137,6 +148,13 @@ struct CachePaddedIndices {
 }
 
 impl Indices for CachePaddedIndices {
+    fn new() -> Self {
+        CachePaddedIndices {
+            head: CachePadded::new(AtomicUsize::new(0)),
+            tail: CachePadded::new(AtomicUsize::new(0)),
+        }
+    }
+
     fn store_head(&self, head: usize) {
         self.head.store(head, Ordering::Release)
     }
@@ -289,15 +307,7 @@ impl<T> RingBuffer<T> {
     #[must_use]
     pub fn new(capacity: usize) -> (Producer<T>, Consumer<T>) {
         let buffer = Arc::new(RingBuffer {
-            storage: DynamicStorage {
-                addr: TightAddressing::new(capacity),
-                indices: CachePaddedIndices {
-                    head: CachePadded::new(AtomicUsize::new(0)),
-                    tail: CachePadded::new(AtomicUsize::new(0)),
-                },
-                data_ptr: ManuallyDrop::new(Vec::with_capacity(capacity)).as_mut_ptr(),
-                _marker: PhantomData,
-            },
+            storage: DynamicStorage::new(capacity),
         });
         let p = Producer {
             buffer: buffer.clone(),

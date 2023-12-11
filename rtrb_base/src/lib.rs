@@ -1,36 +1,13 @@
 #![no_std]
 #![warn(rust_2018_idioms)]
 
+use core::sync::atomic::{AtomicUsize, Ordering};
+
 pub trait Indices {
     fn new() -> Self;
 
-    fn store_head(&self, head: usize);
-
-    // This might be faster than `store_head()`.
-    fn store_head_relaxed(&self, head: usize) {
-        self.store_head(head)
-    }
-
-    fn store_tail(&self, tail: usize);
-
-    // This might be faster than `store_tail()`.
-    fn store_tail_relaxed(&self, tail: usize) {
-        self.store_tail(tail)
-    }
-
-    fn load_head(&self) -> usize;
-
-    // This might be faster than `load_head()`.
-    fn load_head_relaxed(&self) -> usize {
-        self.load_head()
-    }
-
-    fn load_tail(&self) -> usize;
-
-    // This might be faster than `load_tail()`.
-    fn load_tail_relaxed(&self) -> usize {
-        self.load_tail()
-    }
+    fn head(&self) -> &AtomicUsize;
+    fn tail(&self) -> &AtomicUsize;
 }
 
 // TODO: unsafe trait? or make all methods unsafe?
@@ -74,8 +51,8 @@ pub trait Storage {
 
     #[inline(never)]
     fn drop_all_elements(&mut self) {
-        let mut head = self.indices().load_head_relaxed();
-        let tail = self.indices().load_tail_relaxed();
+        let mut head = self.indices().head().load(Ordering::Relaxed);
+        let tail = self.indices().tail().load(Ordering::Relaxed);
 
         // Loop over all slots that hold a value and drop them.
         while head != tail {
@@ -86,7 +63,7 @@ pub trait Storage {
         }
         // This is not needed if drop_all_elements() is only called once,
         // but to be safe, we call it anyway:
-        self.indices().store_head_relaxed(head);
+        self.indices().head().store(head, Ordering::Relaxed);
     }
 
     /// Returns a pointer to the slot at position `pos`.

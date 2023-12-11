@@ -158,43 +158,13 @@ impl Indices for CachePaddedIndices {
     }
 
     #[inline]
-    fn store_head(&self, head: usize) {
-        self.head.store(head, Ordering::Release)
+    fn head(&self) -> &AtomicUsize {
+        &self.head
     }
 
     #[inline]
-    fn store_head_relaxed(&self, head: usize) {
-        self.head.store(head, Ordering::Relaxed)
-    }
-
-    #[inline]
-    fn store_tail(&self, tail: usize) {
-        self.tail.store(tail, Ordering::Release)
-    }
-
-    #[inline]
-    fn store_tail_relaxed(&self, tail: usize) {
-        self.tail.store(tail, Ordering::Relaxed)
-    }
-
-    #[inline]
-    fn load_head(&self) -> usize {
-        self.head.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    fn load_head_relaxed(&self) -> usize {
-        self.head.load(Ordering::Relaxed)
-    }
-
-    #[inline]
-    fn load_tail(&self) -> usize {
-        self.tail.load(Ordering::Acquire)
-    }
-
-    #[inline]
-    fn load_tail_relaxed(&self) -> usize {
-        self.tail.load(Ordering::Relaxed)
+    fn tail(&self) -> &AtomicUsize {
+        &self.tail
     }
 }
 
@@ -431,7 +401,7 @@ impl<T> Producer<T> {
                 self.buffer.storage.slot_ptr(tail).write(value);
             }
             let tail = self.buffer.storage.addr().increment1(tail);
-            self.buffer.storage.indices().store_tail(tail);
+            self.buffer.storage.indices().tail().store(tail, Ordering::Release);
             Ok(())
         } else {
             Err(PushError::Full(value))
@@ -457,10 +427,10 @@ impl<T> Producer<T> {
     /// assert_eq!(p.slots(), 1024);
     /// ```
     pub fn slots(&self) -> usize {
-        let head = self.buffer.storage.indices().load_head();
+        let head = self.buffer.storage.indices().head().load(Ordering::Acquire);
         self.cached_head.set(head);
         // "tail" is only ever written by the producer thread, "Relaxed" is enough
-        let tail = self.buffer.storage.indices().load_tail_relaxed();
+        let tail = self.buffer.storage.indices().tail().load(Ordering::Relaxed);
         self.buffer.storage.addr().capacity() - self.buffer.storage.addr().distance(head, tail)
     }
 
@@ -557,7 +527,7 @@ impl<T> Producer<T> {
     /// For performance, this special case is immplemented separately.
     fn next_tail(&self) -> Option<usize> {
         // "tail" is only ever written by the producer thread, "Relaxed" is enough
-        let tail = self.buffer.storage.indices().load_tail_relaxed();
+        let tail = self.buffer.storage.indices().tail().load(Ordering::Relaxed);
 
         // Check if the queue is *possibly* full.
         if self
@@ -568,7 +538,7 @@ impl<T> Producer<T> {
             == self.buffer.storage.addr().capacity()
         {
             // Refresh the head ...
-            let head = self.buffer.storage.indices().load_head();
+            let head = self.buffer.storage.indices().head().load(Ordering::Acquire);
             self.cached_head.set(head);
 
             // ... and check if it's *really* full.
@@ -649,7 +619,7 @@ impl<T> Consumer<T> {
         if let Some(head) = self.next_head() {
             let value = unsafe { self.buffer.storage.slot_ptr(head).read() };
             let head = self.buffer.storage.addr().increment1(head);
-            self.buffer.storage.indices().store_head(head);
+            self.buffer.storage.indices().head().store(head, Ordering::Release);
             Ok(value)
         } else {
             Err(PopError::Empty)
@@ -701,10 +671,10 @@ impl<T> Consumer<T> {
     /// assert_eq!(c.slots(), 0);
     /// ```
     pub fn slots(&self) -> usize {
-        let tail = self.buffer.storage.indices().load_tail();
+        let tail = self.buffer.storage.indices().tail().load(Ordering::Acquire);
         self.cached_tail.set(tail);
         // "head" is only ever written by the consumer thread, "Relaxed" is enough
-        let head = self.buffer.storage.indices().load_head_relaxed();
+        let head = self.buffer.storage.indices().head().load(Ordering::Relaxed);
         self.buffer.storage.addr().distance(head, tail)
     }
 
@@ -800,12 +770,12 @@ impl<T> Consumer<T> {
     /// For performance, this special case is immplemented separately.
     fn next_head(&self) -> Option<usize> {
         // "head" is only ever written by the consumer thread, "Relaxed" is enough
-        let head = self.buffer.storage.indices().load_head_relaxed();
+        let head = self.buffer.storage.indices().head().load(Ordering::Relaxed);
 
         // Check if the queue is *possibly* empty.
         if head == self.cached_tail.get() {
             // Refresh the tail ...
-            let tail = self.buffer.storage.indices().load_tail();
+            let tail = self.buffer.storage.indices().tail().load(Ordering::Acquire);
             self.cached_tail.set(tail);
 
             // ... and check if it's *really* empty.

@@ -97,8 +97,10 @@ struct DynamicStorage<T, A: Addressing, I: Indices> {
 
 impl<T, A: Addressing, I: Indices> DynamicStorage<T, A, I> {
     fn new(capacity: usize) -> Self {
+        let addr = A::new(capacity);
+        let capacity = addr.capacity();
         Self {
-            addr: A::new(capacity),
+            addr,
             indices: I::new(),
             data_ptr: ManuallyDrop::new(Vec::with_capacity(capacity)).as_mut_ptr(),
             _marker: PhantomData,

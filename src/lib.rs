@@ -526,24 +526,20 @@ impl<T> Producer<T> {
     /// This is a strict subset of the functionality implemented in `write_chunk_uninit()`.
     /// For performance, this special case is immplemented separately.
     fn next_tail(&self) -> Option<usize> {
+        let indices = self.buffer.storage.indices();
+        let addr = self.buffer.storage.addr();
         // "tail" is only ever written by the producer thread, "Relaxed" is enough
-        let tail = self.buffer.storage.indices().tail().load(Ordering::Relaxed);
+        let tail = indices.tail().load(Ordering::Relaxed);
 
         // Check if the queue is *possibly* full.
-        if self
-            .buffer
-            .storage
-            .addr()
-            .distance(self.cached_head.get(), tail)
-            == self.buffer.storage.addr().capacity()
+        if addr.distance(self.cached_head.get(), tail) == addr.capacity()
         {
             // Refresh the head ...
-            let head = self.buffer.storage.indices().head().load(Ordering::Acquire);
+            let head = indices.head().load(Ordering::Acquire);
             self.cached_head.set(head);
 
             // ... and check if it's *really* full.
-            if self.buffer.storage.addr().distance(head, tail)
-                == self.buffer.storage.addr().capacity()
+            if addr.distance(head, tail) == addr.capacity()
             {
                 return None;
             }
@@ -769,13 +765,14 @@ impl<T> Consumer<T> {
     /// This is a strict subset of the functionality implemented in `read_chunk()`.
     /// For performance, this special case is immplemented separately.
     fn next_head(&self) -> Option<usize> {
+        let indices = self.buffer.storage.indices();
         // "head" is only ever written by the consumer thread, "Relaxed" is enough
-        let head = self.buffer.storage.indices().head().load(Ordering::Relaxed);
+        let head = indices.head().load(Ordering::Relaxed);
 
         // Check if the queue is *possibly* empty.
         if head == self.cached_tail.get() {
             // Refresh the tail ...
-            let tail = self.buffer.storage.indices().tail().load(Ordering::Acquire);
+            let tail = indices.tail().load(Ordering::Acquire);
             self.cached_tail.set(tail);
 
             // ... and check if it's *really* empty.

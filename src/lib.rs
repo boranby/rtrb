@@ -536,13 +536,12 @@ impl<T> Producer<T> {
         {
             // Refresh the head ...
             let head = indices.head().load(Ordering::Acquire);
-            self.cached_head.set(head);
-
             // ... and check if it's *really* full.
             if addr.distance(head, tail) == addr.capacity()
             {
                 return None;
             }
+            self.cached_head.set(head);
         }
         Some(tail)
     }
@@ -773,12 +772,11 @@ impl<T> Consumer<T> {
         if head == self.cached_tail.get() {
             // Refresh the tail ...
             let tail = indices.tail().load(Ordering::Acquire);
-            self.cached_tail.set(tail);
-
             // ... and check if it's *really* empty.
             if head == tail {
                 return None;
             }
+            self.cached_tail.set(tail);
         }
         Some(head)
     }

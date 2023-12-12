@@ -167,5 +167,9 @@ create_two_threads_benchmark!(
     "rtrb",
     rtrb::RingBuffer::new,
     |p, i| p.push(i).is_ok(),
-    |c| c.pop().ok()
+    |c| c.pop().ok();
+    "npnc",
+    |capacity| { npnc::bounded::spsc::channel(capacity.next_power_of_two()) },
+    |p, i| p.produce(i).is_ok(),
+    |c| c.consume().ok()
 );

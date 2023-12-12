@@ -25,6 +25,7 @@ std = []
 [dev-dependencies]
 rand = "0.8"
 criterion = "0.3"
+npnc = "0.2"
 # TODO: This is only needed for the doctests of cache_padded.rs! Is there a way to avoid this?
 crossbeam-utils = { version = "0.8", default-features = false }
 

@@ -5,6 +5,7 @@ use criterion::{black_box, criterion_group, criterion_main};
 use criterion::{AxisScale, PlotConfiguration};
 
 use rtrb::RingBuffer;
+use rtrb::RingBuffer2;
 
 pub fn add_function<P, C, Create, Push, Pop, M>(
     group: &mut criterion::BenchmarkGroup<M>,
@@ -105,6 +106,14 @@ fn criterion_benchmark(criterion: &mut criterion::Criterion) {
         &mut group,
         "-1-rtrb",
         RingBuffer::new,
+        |p, i| p.push(i).is_ok(),
+        |c| c.pop().ok(),
+    );
+
+    add_function(
+        &mut group,
+        "-1-rtrb2",
+        RingBuffer2::new,
         |p, i| p.push(i).is_ok(),
         |c| c.pop().ok(),
     );

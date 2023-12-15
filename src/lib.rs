@@ -372,3 +372,6 @@ impl<T: Copy> CopyToUninit<T> for [T] {
         }
     }
 }
+
+/// Ring buffer with power-of-two storage.
+pub type RingBuffer2<T> = DynamicStorage<T, PowerOfTwoAddressing, CachePaddedIndices>;

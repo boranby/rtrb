@@ -158,9 +158,8 @@ impl<T, A: Addressing, I: Indices> PartialEq for DynamicStorage<T, A, I> {
 
 impl<T, A: Addressing, I: Indices> Eq for DynamicStorage<T, A, I> {}
 
-// TODO: consider this an "unsafe" impl?
-// all methods must be implemented correctly, or the whole thing is unsound
-impl<T, A: Addressing, I: Indices> Storage for DynamicStorage<T, A, I> {
+// SAFETY: all methods must be implemented correctly, or the whole thing is unsound
+unsafe impl<T, A: Addressing, I: Indices> Storage for DynamicStorage<T, A, I> {
     type Item = T;
     type Addr = A;
     type Indices = I;
@@ -198,7 +197,8 @@ pub struct CachePaddedIndices {
     tail: CachePadded<AtomicUsize>,
 }
 
-impl Indices for CachePaddedIndices {
+// SAFETY: all methods must be implemented correctly, or the whole thing is unsound
+unsafe impl Indices for CachePaddedIndices {
     fn new() -> Self {
         CachePaddedIndices {
             head: CachePadded::new(AtomicUsize::new(0)),
@@ -224,7 +224,8 @@ pub struct TightAddressing {
     capacity: usize,
 }
 
-impl Addressing for TightAddressing {
+// SAFETY: all methods must be implemented correctly, or the whole thing is unsound
+unsafe impl Addressing for TightAddressing {
     fn new(capacity: usize) -> Self {
         Self { capacity }
     }
@@ -287,7 +288,8 @@ pub struct PowerOfTwoAddressing {
     capacity: usize,
 }
 
-impl Addressing for PowerOfTwoAddressing {
+// SAFETY: all methods must be implemented correctly, or the whole thing is unsound
+unsafe impl Addressing for PowerOfTwoAddressing {
     fn new(capacity: usize) -> Self {
         Self {
             capacity: capacity.next_power_of_two(),

@@ -6,15 +6,24 @@ use core::fmt;
 use core::ops::Deref;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-pub trait Indices {
+/// Indices.
+///
+/// # Safety
+///
+/// The indices must not be changed by anyone else.
+pub unsafe trait Indices {
     fn new() -> Self;
 
     fn head(&self) -> &AtomicUsize;
     fn tail(&self) -> &AtomicUsize;
 }
 
-// TODO: unsafe trait? or make all methods unsafe?
-pub trait Addressing {
+/// Addressing.
+///
+/// # Safety
+///
+/// ...
+pub unsafe trait Addressing {
     //type SizeType;
     // TODO: AtomicSizeType?
 
@@ -39,9 +48,14 @@ pub trait Addressing {
     fn distance(&self, a: usize, b: usize) -> usize;
 }
 
-// TODO: unsafe trait? or make all methods unsafe?
-// Safety: Storage must be contiguous.
-pub trait Storage {
+/// Storage.
+///
+/// # Safety
+///
+/// Storage must be contiguous.
+///
+/// ...
+pub unsafe trait Storage {
     type Item;
     type Addr: Addressing;
     type Indices: Indices;

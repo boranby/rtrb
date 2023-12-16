@@ -295,12 +295,6 @@ unsafe impl Addressing for PowerOfTwoAddressing {
         pos.wrapping_add(n)
     }
 
-    // TODO: this is probably not more efficient?
-    #[inline]
-    fn increment1(&self, pos: usize) -> usize {
-        pos.wrapping_add(1)
-    }
-
     #[inline]
     fn distance(&self, a: usize, b: usize) -> usize {
         b.wrapping_sub(a)

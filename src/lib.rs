@@ -69,7 +69,7 @@ use chunks::WriteChunkUninit;
 use rtrb_base::{Addressing, Indices, Storage};
 
 // TODO: use rtrb_base::errors::* or something?
-pub use rtrb_base::{PushError, PopError};
+pub use rtrb_base::{PopError, PushError};
 
 /// A bounded single-producer single-consumer (SPSC) queue.
 ///
@@ -117,36 +117,25 @@ impl<T, A: Addressing, I: Indices> DynamicStorage<T, A, I> {
     /// ```
     #[allow(clippy::new_ret_no_self)]
     #[must_use]
-    pub fn new(capacity: usize) -> (rtrb_base::Producer<Self>, rtrb_base::Consumer<Self>) {
+    pub fn new(
+        capacity: usize,
+    ) -> (
+        rtrb_base::Producer<Arc<DynamicStorage<T, A, I>>>,
+        rtrb_base::Consumer<Arc<DynamicStorage<T, A, I>>>,
+    ) {
         let addr = A::new(capacity);
         let capacity = addr.capacity();
-        let buffer = Arc::new(Self {
+        let reference = Arc::new(Self {
             addr,
             indices: I::new(),
             data_ptr: ManuallyDrop::new(Vec::with_capacity(capacity)).as_mut_ptr(),
             _marker: PhantomData,
         });
         // SAFETY: Only a single instance of Producer is allowed.
-        let p = unsafe { rtrb_base::Producer::new(buffer.clone()) };
-        let c = unsafe { rtrb_base::Consumer::new(buffer) };
+        let p = unsafe { rtrb_base::Producer::new(reference.clone()) };
+        // SAFETY: Only a single instance of Consumer is allowed.
+        let c = unsafe { rtrb_base::Consumer::new(reference) };
         (p, c)
-    }
-
-    /// Returns the capacity of the queue.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::RingBuffer;
-    ///
-    /// let (producer, consumer) = RingBuffer::<f32>::new(100);
-    /// assert_eq!(producer.buffer().capacity(), 100);
-    /// assert_eq!(consumer.buffer().capacity(), 100);
-    /// // Both producer and consumer of course refer to the same ring buffer:
-    /// assert_eq!(producer.buffer(), consumer.buffer());
-    /// ```
-    pub fn capacity(&self) -> usize {
-        self.addr.capacity()
     }
 }
 
@@ -164,8 +153,6 @@ unsafe impl<T, A: Addressing, I: Indices> Storage for DynamicStorage<T, A, I> {
     type Addr = A;
     type Indices = I;
 
-    type Reference = Arc<Self>;
-
     fn data_ptr(&self) -> *mut Self::Item {
         self.data_ptr
     }
@@ -176,10 +163,6 @@ unsafe impl<T, A: Addressing, I: Indices> Storage for DynamicStorage<T, A, I> {
 
     fn indices(&self) -> &Self::Indices {
         &self.indices
-    }
-
-    fn is_abandoned(this: &Self::Reference) -> bool {
-        Arc::strong_count(this) < 2
     }
 }
 
@@ -337,7 +320,53 @@ impl<T, A: Addressing, I: Indices> Drop for DynamicStorage<T, A, I> {
 }
 
 /// TODO: move docs
-pub type Producer<T> = rtrb_base::Producer<RingBuffer<T>>;
+pub type Producer<T> = rtrb_base::Producer<Arc<RingBuffer<T>>>;
+
+/*
+impl<T> Producer<T> {
+    /// Returns `true` if the corresponding [`Consumer`] has been destroyed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::RingBuffer;
+    ///
+    /// let (mut p, c) = RingBuffer::new(7);
+    /// assert!(!p.is_abandoned());
+    /// assert_eq!(p.push(10), Ok(()));
+    /// drop(c);
+    /// // The items that are still in the ring buffer are not accessible anymore.
+    /// assert!(p.is_abandoned());
+    /// // Even though it's futile, items can still be written:
+    /// assert_eq!(p.push(11), Ok(()));
+    /// ```
+    ///
+    /// Since the consumer can be concurrently dropped on another thread,
+    /// the producer might become abandoned at any time:
+    ///
+    /// ```
+    /// # use rtrb::RingBuffer;
+    /// # let (p, c) = RingBuffer::<i32>::new(1);
+    /// if !p.is_abandoned() {
+    ///     // Right now, the consumer might still be alive, but it might as well not be
+    ///     // if another thread has just dropped it.
+    /// }
+    /// ```
+    ///
+    /// However, if it already is abandoned, it will stay that way:
+    ///
+    /// ```
+    /// # use rtrb::RingBuffer;
+    /// # let (p, c) = RingBuffer::<i32>::new(1);
+    /// if p.is_abandoned() {
+    ///     // The consumer does definitely not exist anymore.
+    /// }
+    /// ```
+    pub fn is_abandoned(&self) -> bool {
+        Arc::strong_count(&self.buffer) < 2
+    }
+}
+*/
 
 /// Extension trait used to provide a [`copy_to_uninit()`](CopyToUninit::copy_to_uninit)
 /// method on built-in slices.

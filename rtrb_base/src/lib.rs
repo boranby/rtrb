@@ -60,7 +60,7 @@ pub unsafe trait Storage {
     type Addr: Addressing;
     type Indices: Indices;
 
-    type Reference: Deref<Target = Self>;
+    //type Reference: Deref<Target = Self>;
 
     fn data_ptr(&self) -> *mut Self::Item;
 
@@ -92,7 +92,7 @@ pub unsafe trait Storage {
         self.data_ptr().add(self.addr().collapse_position(pos))
     }
 
-    fn is_abandoned(this: &Self::Reference) -> bool;
+    //fn is_abandoned(this: &Self::Reference) -> bool;
 }
 
 /// The producer side of a [`RingBuffer`].
@@ -117,9 +117,9 @@ pub unsafe trait Storage {
 /// When the `Producer` is dropped after the [`Consumer`] has already been dropped,
 /// [`RingBuffer::drop()`] will be called, freeing the allocated memory.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Producer<S: Storage> {
+pub struct Producer<R> {
     /// A reference to the ring buffer.
-    buffer: S::Reference,
+    buffer: R,
 
     /// A copy of `buffer.head` for quick access.
     ///
@@ -127,11 +127,11 @@ pub struct Producer<S: Storage> {
     cached_head: Cell<usize>,
 }
 
-unsafe impl<S: Storage> Send for Producer<S> where S::Item: Send {}
+unsafe impl<S: Storage, R: Deref<Target = S>> Send for Producer<R> where S::Item: Send {}
 
-impl<S: Storage> Producer<S> {
+impl<S: Storage, R: Deref<Target = S>> Producer<R> {
     #[doc(hidden)]
-    pub unsafe fn new(buffer: S::Reference) -> Self {
+    pub unsafe fn new(buffer: R) -> Self {
         Self {
             buffer,
             cached_head: Cell::new(0),
@@ -236,51 +236,23 @@ impl<S: Storage> Producer<S> {
         self.next_tail().is_none()
     }
 
-    /// Returns `true` if the corresponding [`Consumer`] has been destroyed.
+    /// Returns the total capacity of the queue.
+    ///
+    /// At any time, the capacity is subdivided into
+    /// [`Producer::slots()`] available for writing and
+    /// [`Consumer::slots()`] available for reading.
     ///
     /// # Examples
     ///
     /// ```
     /// use rtrb::RingBuffer;
     ///
-    /// let (mut p, c) = RingBuffer::new(7);
-    /// assert!(!p.is_abandoned());
-    /// assert_eq!(p.push(10), Ok(()));
-    /// drop(c);
-    /// // The items that are still in the ring buffer are not accessible anymore.
-    /// assert!(p.is_abandoned());
-    /// // Even though it's futile, items can still be written:
-    /// assert_eq!(p.push(11), Ok(()));
+    /// let (producer, consumer) = RingBuffer::<f32>::new(100);
+    /// assert_eq!(producer.capacity(), 100);
+    /// assert_eq!(consumer.capacity(), 100);
     /// ```
-    ///
-    /// Since the consumer can be concurrently dropped on another thread,
-    /// the producer might become abandoned at any time:
-    ///
-    /// ```
-    /// # use rtrb::RingBuffer;
-    /// # let (p, c) = RingBuffer::<i32>::new(1);
-    /// if !p.is_abandoned() {
-    ///     // Right now, the consumer might still be alive, but it might as well not be
-    ///     // if another thread has just dropped it.
-    /// }
-    /// ```
-    ///
-    /// However, if it already is abandoned, it will stay that way:
-    ///
-    /// ```
-    /// # use rtrb::RingBuffer;
-    /// # let (p, c) = RingBuffer::<i32>::new(1);
-    /// if p.is_abandoned() {
-    ///     // The consumer does definitely not exist anymore.
-    /// }
-    /// ```
-    pub fn is_abandoned(&self) -> bool {
-        S::is_abandoned(&self.buffer)
-    }
-
-    /// Returns a read-only reference to the ring buffer.
-    pub fn buffer(&self) -> &S {
-        &self.buffer
+    pub fn capacity(&self) -> usize {
+        self.buffer.addr().capacity()
     }
 
     /// Get the tail position for writing the next slot, if available.
@@ -328,9 +300,9 @@ impl<S: Storage> Producer<S> {
 /// When the `Consumer` is dropped after the [`Producer`] has already been dropped,
 /// [`RingBuffer::drop()`] will be called, freeing the allocated memory.
 #[derive(Debug, PartialEq, Eq)]
-pub struct Consumer<S: Storage> {
+pub struct Consumer<R> {
     /// A reference to the ring buffer.
-    buffer: S::Reference,
+    buffer: R,
 
     /// A copy of `buffer.tail` for quick access.
     ///
@@ -338,11 +310,11 @@ pub struct Consumer<S: Storage> {
     cached_tail: Cell<usize>,
 }
 
-unsafe impl<S: Storage> Send for Consumer<S> where S::Item: Send {}
+unsafe impl<S: Storage, R: Deref<Target = S>> Send for Consumer<R> where S::Item: Send {}
 
-impl<S: Storage> Consumer<S> {
+impl<S: Storage, R: Deref<Target = S>> Consumer<R> {
     #[doc(hidden)]
-    pub unsafe fn new(buffer: S::Reference) -> Self {
+    pub unsafe fn new(buffer: R) -> Self {
         Self {
             buffer,
             cached_tail: Cell::new(0),
@@ -481,6 +453,7 @@ impl<S: Storage> Consumer<S> {
         self.next_head().is_none()
     }
 
+    /*
     /// Returns `true` if the corresponding [`Producer`] has been destroyed.
     ///
     /// # Examples
@@ -521,10 +494,25 @@ impl<S: Storage> Consumer<S> {
     pub fn is_abandoned(&self) -> bool {
         S::is_abandoned(&self.buffer)
     }
+    */
 
-    /// Returns a read-only reference to the ring buffer.
-    pub fn buffer(&self) -> &S {
-        &self.buffer
+    /// Returns the total capacity of the queue.
+    ///
+    /// At any time, the capacity is subdivided into
+    /// [`Producer::slots()`] available for writing and
+    /// [`Consumer::slots()`] available for reading.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::RingBuffer;
+    ///
+    /// let (producer, consumer) = RingBuffer::<f32>::new(100);
+    /// assert_eq!(producer.capacity(), 100);
+    /// assert_eq!(consumer.capacity(), 100);
+    /// ```
+    pub fn capacity(&self) -> usize {
+        self.buffer.addr().capacity()
     }
 
     /// Get the head position for reading the next slot, if available.

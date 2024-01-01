@@ -50,6 +50,13 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(clippy::undocumented_unsafe_blocks, clippy::unnecessary_safety_comment)]
 
+#![deny(clippy::arithmetic_side_effects)]
+#![deny(clippy::cast_possible_truncation)]
+#![deny(clippy::cast_possible_wrap)]
+#![deny(clippy::cast_lossless)]
+#![deny(clippy::indexing_slicing)]
+#![deny(clippy::as_conversions)]
+
 extern crate alloc;
 
 use alloc::sync::Arc;

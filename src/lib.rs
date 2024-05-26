@@ -49,7 +49,6 @@
 #![deny(missing_docs, missing_debug_implementations)]
 #![deny(unsafe_op_in_unsafe_fn)]
 #![warn(clippy::undocumented_unsafe_blocks, clippy::unnecessary_safety_comment)]
-
 //#![deny(clippy::arithmetic_side_effects)]
 #![deny(clippy::cast_possible_truncation)]
 #![deny(clippy::cast_possible_wrap)]

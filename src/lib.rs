@@ -46,7 +46,7 @@
 
 #![cfg_attr(not(feature = "std"), no_std)]
 #![warn(rust_2018_idioms)]
-#![deny(missing_docs, missing_debug_implementations)]
+//#![deny(missing_docs, missing_debug_implementations)]
 
 extern crate alloc;
 
@@ -69,7 +69,10 @@ use chunks::WriteChunkUninit;
 use rtrb_base::{Addressing, Indices, Storage};
 
 // TODO: use rtrb_base::errors::* or something?
-pub use rtrb_base::{PopError, PushError};
+pub use rtrb_base::{PopError, PeekError, PushError};
+
+// NB: non-public!
+type RingBufferInner<T> = DynamicStorage<T, TightAddressing, CachePaddedIndices>;
 
 /// A bounded single-producer single-consumer (SPSC) queue.
 ///
@@ -77,25 +80,10 @@ pub use rtrb_base::{PopError, PushError};
 /// both of which can be obtained with [`RingBuffer::new()`].
 ///
 /// *See also the [crate-level documentation](crate).*
-pub type RingBuffer<T> = DynamicStorage<T, TightAddressing, CachePaddedIndices>;
-
-/// TODO: move docs
-pub type Consumer<T> = rtrb_base::Consumer<RingBuffer<T>>;
-
-/// Dynamic storage on the heap.
 #[derive(Debug)]
-pub struct DynamicStorage<T, A: Addressing, I: Indices> {
-    addr: A,
-    indices: I,
+pub struct RingBuffer<T>(RingBufferInner<T>);
 
-    /// The buffer holding slots.
-    data_ptr: *mut T,
-
-    /// Indicates that dropping a `DynamicStorage<T, _>` may drop elements of type `T`.
-    _marker: PhantomData<T>,
-}
-
-impl<T, A: Addressing, I: Indices> DynamicStorage<T, A, I> {
+impl<T> RingBuffer<T> {
     /// Creates a ring buffer with the given `capacity` and returns [`Producer`] and [`Consumer`].
     ///
     /// # Examples
@@ -115,6 +103,78 @@ impl<T, A: Addressing, I: Indices> DynamicStorage<T, A, I> {
     /// let (mut producer, consumer) = RingBuffer::new(100);
     /// assert_eq!(producer.push(0.0f32), Ok(()));
     /// ```
+    #[inline(always)]
+    #[allow(clippy::new_ret_no_self)]
+    #[must_use]
+    pub fn new(
+        capacity: usize,
+    ) -> (Producer<T>, Consumer<T>) {
+        let (p, c) = RingBufferInner::<T>::new(capacity);
+        (Producer(p), Consumer(c))
+    }
+}
+
+/// The producer side of a [`RingBuffer`].
+///
+/// Can be moved between threads,
+/// but references from different threads are not allowed
+/// (i.e. it is [`Send`] but not [`Sync`]).
+///
+/// Can only be created with [`RingBuffer::new()`]
+/// (together with its counterpart, the [`Consumer`]).
+///
+/// Individual elements can be moved into the ring buffer with [`Producer::push()`],
+/// multiple elements at once can be written with [`Producer::write_chunk()`]
+/// and [`Producer::write_chunk_uninit()`].
+///
+/// The number of free slots currently available for writing can be obtained with
+/// [`Producer::slots()`].
+///
+/// When the `Producer` is dropped, [`Consumer::is_abandoned()`] will return `true`.
+/// This can be used as a crude way to communicate to the receiving thread
+/// that no more data will be produced.
+/// When the `Producer` is dropped after the [`Consumer`] has already been dropped,
+/// [`RingBuffer::drop()`] will be called, freeing the allocated memory.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Producer<T>(rtrb_base::Producer<Arc<RingBufferInner<T>>>);
+
+/// The consumer side of a [`RingBuffer`].
+///
+/// Can be moved between threads,
+/// but references from different threads are not allowed
+/// (i.e. it is [`Send`] but not [`Sync`]).
+///
+/// Can only be created with [`RingBuffer::new()`]
+/// (together with its counterpart, the [`Producer`]).
+///
+/// Individual elements can be moved out of the ring buffer with [`Consumer::pop()`],
+/// multiple elements at once can be read with [`Consumer::read_chunk()`].
+///
+/// The number of slots currently available for reading can be obtained with
+/// [`Consumer::slots()`].
+///
+/// When the `Consumer` is dropped, [`Producer::is_abandoned()`] will return `true`.
+/// This can be used as a crude way to communicate to the sending thread
+/// that no more data will be consumed.
+/// When the `Consumer` is dropped after the [`Producer`] has already been dropped,
+/// [`RingBuffer::drop()`] will be called, freeing the allocated memory.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Consumer<T>(rtrb_base::Consumer<Arc<RingBufferInner<T>>>);
+
+/// Dynamic storage on the heap.
+#[derive(Debug)]
+pub struct DynamicStorage<T, A: Addressing, I: Indices> {
+    addr: A,
+    indices: I,
+
+    /// The buffer holding slots.
+    data_ptr: *mut T,
+
+    /// Indicates that dropping a `DynamicStorage<T, _>` may drop elements of type `T`.
+    _marker: PhantomData<T>,
+}
+
+impl<T, A: Addressing, I: Indices> DynamicStorage<T, A, I> {
     #[allow(clippy::new_ret_no_self)]
     #[must_use]
     pub fn new(
@@ -313,11 +373,116 @@ impl<T, A: Addressing, I: Indices> Drop for DynamicStorage<T, A, I> {
     }
 }
 
-/// TODO: move docs
-pub type Producer<T> = rtrb_base::Producer<Arc<RingBuffer<T>>>;
+impl<T> Producer<T> {
+    /// Attempts to push an element into the queue.
+    ///
+    /// The element is *moved* into the ring buffer and its slot
+    /// is made available to be read by the [`Consumer`].
+    ///
+    /// # Errors
+    ///
+    /// If the queue is full, the element is returned back as an error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::{RingBuffer, PushError};
+    ///
+    /// let (mut p, c) = RingBuffer::new(1);
+    ///
+    /// assert_eq!(p.push(10), Ok(()));
+    /// assert_eq!(p.push(20), Err(PushError::Full(20)));
+    /// ```
+    #[inline(always)]
+    pub fn push(&mut self, value: T) -> Result<(), PushError<T>> {
+        self.0.push(value)
+    }
+
+    /// Returns the number of slots available for writing.
+    ///
+    /// Since items can be concurrently consumed on another thread, the actual number
+    /// of available slots may increase at any time (up to the [`RingBuffer::capacity()`]).
+    ///
+    /// To check for a single available slot,
+    /// using [`Producer::is_full()`] is often quicker
+    /// (because it might not have to check an atomic variable).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::RingBuffer;
+    ///
+    /// let (p, c) = RingBuffer::<f32>::new(1024);
+    ///
+    /// assert_eq!(p.slots(), 1024);
+    /// ```
+    #[inline(always)]
+    pub fn slots(&self) -> usize {
+        self.0.slots()
+    }
+
+    /// Returns `true` if there are currently no slots available for writing.
+    ///
+    /// A full ring buffer might cease to be full at any time
+    /// if the corresponding [`Consumer`] is consuming items in another thread.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::RingBuffer;
+    ///
+    /// let (p, c) = RingBuffer::<f32>::new(1);
+    ///
+    /// assert!(!p.is_full());
+    /// ```
+    ///
+    /// Since items can be concurrently consumed on another thread, the ring buffer
+    /// might not be full for long:
+    ///
+    /// ```
+    /// # use rtrb::RingBuffer;
+    /// # let (p, c) = RingBuffer::<f32>::new(1);
+    /// if p.is_full() {
+    ///     // The buffer might be full, but it might as well not be
+    ///     // if an item was just consumed on another thread.
+    /// }
+    /// ```
+    ///
+    /// However, if it's not full, another thread cannot change that:
+    ///
+    /// ```
+    /// # use rtrb::RingBuffer;
+    /// # let (p, c) = RingBuffer::<f32>::new(1);
+    /// if !p.is_full() {
+    ///     // At least one slot is guaranteed to be available for writing.
+    /// }
+    /// ```
+    #[inline(always)]
+    pub fn is_full(&self) -> bool {
+        self.0.is_full()
+    }
+
+    /// Returns the total capacity of the queue.
+    ///
+    /// At any time, the capacity is subdivided into
+    /// [`Producer::slots()`] available for writing and
+    /// [`Consumer::slots()`] available for reading.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::RingBuffer;
+    ///
+    /// let (producer, consumer) = RingBuffer::<f32>::new(100);
+    /// assert_eq!(producer.capacity(), 100);
+    /// assert_eq!(consumer.capacity(), 100);
+    /// ```
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
 
 /*
-impl<T> Producer<T> {
     /// Returns `true` if the corresponding [`Consumer`] has been destroyed.
     ///
     /// # Examples
@@ -359,8 +524,195 @@ impl<T> Producer<T> {
     pub fn is_abandoned(&self) -> bool {
         Arc::strong_count(&self.buffer) < 2
     }
-}
 */
+}
+
+impl<T> Consumer<T> {
+    /// Attempts to pop an element from the queue.
+    ///
+    /// The element is *moved* out of the ring buffer and its slot
+    /// is made available to be filled by the [`Producer`] again.
+    ///
+    /// # Errors
+    ///
+    /// If the queue is empty, an error is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::{PopError, RingBuffer};
+    ///
+    /// let (mut p, mut c) = RingBuffer::new(1);
+    ///
+    /// assert_eq!(p.push(10), Ok(()));
+    /// assert_eq!(c.pop(), Ok(10));
+    /// assert_eq!(c.pop(), Err(PopError::Empty));
+    /// ```
+    ///
+    /// To obtain an [`Option<T>`](Option), use [`.ok()`](Result::ok) on the result.
+    ///
+    /// ```
+    /// # use rtrb::RingBuffer;
+    /// # let (mut p, mut c) = RingBuffer::new(1);
+    /// assert_eq!(p.push(20), Ok(()));
+    /// assert_eq!(c.pop().ok(), Some(20));
+    /// ```
+    #[inline(always)]
+    pub fn pop(&mut self) -> Result<T, PopError> {
+        self.0.pop()
+    }
+
+    /// Attempts to read an element from the queue without removing it.
+    ///
+    /// # Errors
+    ///
+    /// If the queue is empty, an error is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::{PeekError, RingBuffer};
+    ///
+    /// let (mut p, c) = RingBuffer::new(1);
+    ///
+    /// assert_eq!(c.peek(), Err(PeekError::Empty));
+    /// assert_eq!(p.push(10), Ok(()));
+    /// assert_eq!(c.peek(), Ok(&10));
+    /// assert_eq!(c.peek(), Ok(&10));
+    /// ```
+    #[inline(always)]
+    pub fn peek(&self) -> Result<&T, PeekError> {
+        self.0.peek()
+    }
+
+    /// Returns the number of slots available for reading.
+    ///
+    /// Since items can be concurrently produced on another thread, the actual number
+    /// of available slots may increase at any time (up to the [`RingBuffer::capacity()`]).
+    ///
+    /// To check for a single available slot,
+    /// using [`Consumer::is_empty()`] is often quicker
+    /// (because it might not have to check an atomic variable).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::RingBuffer;
+    ///
+    /// let (p, c) = RingBuffer::<f32>::new(1024);
+    ///
+    /// assert_eq!(c.slots(), 0);
+    /// ```
+    #[inline(always)]
+    pub fn slots(&self) -> usize {
+        self.0.slots()
+    }
+
+    /// Returns `true` if there are currently no slots available for reading.
+    ///
+    /// An empty ring buffer might cease to be empty at any time
+    /// if the corresponding [`Producer`] is producing items in another thread.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::RingBuffer;
+    ///
+    /// let (p, c) = RingBuffer::<f32>::new(1);
+    ///
+    /// assert!(c.is_empty());
+    /// ```
+    ///
+    /// Since items can be concurrently produced on another thread, the ring buffer
+    /// might not be empty for long:
+    ///
+    /// ```
+    /// # use rtrb::RingBuffer;
+    /// # let (p, c) = RingBuffer::<f32>::new(1);
+    /// if c.is_empty() {
+    ///     // The buffer might be empty, but it might as well not be
+    ///     // if an item was just produced on another thread.
+    /// }
+    /// ```
+    ///
+    /// However, if it's not empty, another thread cannot change that:
+    ///
+    /// ```
+    /// # use rtrb::RingBuffer;
+    /// # let (p, c) = RingBuffer::<f32>::new(1);
+    /// if !c.is_empty() {
+    ///     // At least one slot is guaranteed to be available for reading.
+    /// }
+    /// ```
+    #[inline(always)]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /*
+    /// Returns `true` if the corresponding [`Producer`] has been destroyed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::RingBuffer;
+    ///
+    /// let (mut p, mut c) = RingBuffer::new(7);
+    /// assert!(!c.is_abandoned());
+    /// assert_eq!(p.push(10), Ok(()));
+    /// drop(p);
+    /// assert!(c.is_abandoned());
+    /// // The items that are left in the ring buffer can still be consumed:
+    /// assert_eq!(c.pop(), Ok(10));
+    /// ```
+    ///
+    /// Since the producer can be concurrently dropped on another thread,
+    /// the consumer might become abandoned at any time:
+    ///
+    /// ```
+    /// # use rtrb::RingBuffer;
+    /// # let (p, c) = RingBuffer::<i32>::new(1);
+    /// if !c.is_abandoned() {
+    ///     // Right now, the producer might still be alive, but it might as well not be
+    ///     // if another thread has just dropped it.
+    /// }
+    /// ```
+    ///
+    /// However, if it already is abandoned, it will stay that way:
+    ///
+    /// ```
+    /// # use rtrb::RingBuffer;
+    /// # let (p, c) = RingBuffer::<i32>::new(1);
+    /// if c.is_abandoned() {
+    ///     // The producer does definitely not exist anymore.
+    /// }
+    /// ```
+    #[inline(always)]
+    pub fn is_abandoned(&self) -> bool {
+        self.0.is_abandoned()
+    }
+    */
+
+    /// Returns the total capacity of the queue.
+    ///
+    /// At any time, the capacity is subdivided into
+    /// [`Producer::slots()`] available for writing and
+    /// [`Consumer::slots()`] available for reading.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use rtrb::RingBuffer;
+    ///
+    /// let (producer, consumer) = RingBuffer::<f32>::new(100);
+    /// assert_eq!(producer.capacity(), 100);
+    /// assert_eq!(consumer.capacity(), 100);
+    /// ```
+    #[inline(always)]
+    pub fn capacity(&self) -> usize {
+        self.0.capacity()
+    }
+}
 
 /// Extension trait used to provide a [`copy_to_uninit()`](CopyToUninit::copy_to_uninit)
 /// method on built-in slices.

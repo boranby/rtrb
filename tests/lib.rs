@@ -123,8 +123,8 @@ fn trait_impls() {
     let (mut p, mut c) = RingBuffer::<u8>::new(0);
 
     //assert!(format!("{:?}", p.buffer()).starts_with("RingBuffer {"));
-    assert!(format!("{:?}", p).starts_with("Producer {"));
-    assert!(format!("{:?}", c).starts_with("Consumer {"));
+    assert!(format!("{:?}", p).starts_with("Producer(Producer {"));
+    assert!(format!("{:?}", c).starts_with("Consumer(Consumer {"));
 
     assert_eq!(format!("{:?}", p.push(42).unwrap_err()), "Full(_)");
     assert_eq!(p.push(42).unwrap_err().to_string(), "full ring buffer");
@@ -138,6 +138,7 @@ fn trait_impls() {
     assert_ne!(c, another_c);
 }
 
+/*
 #[test]
 fn no_race_with_is_abandoned() {
     static mut V: u32 = 0;
@@ -154,3 +155,4 @@ fn no_race_with_is_abandoned() {
     }
     t.join().unwrap();
 }
+*/

@@ -95,27 +95,6 @@ pub unsafe trait Storage {
     //fn is_abandoned(this: &Self::Reference) -> bool;
 }
 
-/// The producer side of a [`RingBuffer`].
-///
-/// Can be moved between threads,
-/// but references from different threads are not allowed
-/// (i.e. it is [`Send`] but not [`Sync`]).
-///
-/// Can only be created with [`RingBuffer::new()`]
-/// (together with its counterpart, the [`Consumer`]).
-///
-/// Individual elements can be moved into the ring buffer with [`Producer::push()`],
-/// multiple elements at once can be written with [`Producer::write_chunk()`]
-/// and [`Producer::write_chunk_uninit()`].
-///
-/// The number of free slots currently available for writing can be obtained with
-/// [`Producer::slots()`].
-///
-/// When the `Producer` is dropped, [`Consumer::is_abandoned()`] will return `true`.
-/// This can be used as a crude way to communicate to the receiving thread
-/// that no more data will be produced.
-/// When the `Producer` is dropped after the [`Consumer`] has already been dropped,
-/// [`RingBuffer::drop()`] will be called, freeing the allocated memory.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Producer<R> {
     /// A reference to the ring buffer.
@@ -138,25 +117,6 @@ impl<S: Storage, R: Deref<Target = S>> Producer<R> {
         }
     }
 
-    /// Attempts to push an element into the queue.
-    ///
-    /// The element is *moved* into the ring buffer and its slot
-    /// is made available to be read by the [`Consumer`].
-    ///
-    /// # Errors
-    ///
-    /// If the queue is full, the element is returned back as an error.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::{RingBuffer, PushError};
-    ///
-    /// let (mut p, c) = RingBuffer::new(1);
-    ///
-    /// assert_eq!(p.push(10), Ok(()));
-    /// assert_eq!(p.push(20), Err(PushError::Full(20)));
-    /// ```
     pub fn push(&mut self, value: S::Item) -> Result<(), PushError<S::Item>> {
         if let Some(tail) = self.next_tail() {
             unsafe {
@@ -170,24 +130,6 @@ impl<S: Storage, R: Deref<Target = S>> Producer<R> {
         }
     }
 
-    /// Returns the number of slots available for writing.
-    ///
-    /// Since items can be concurrently consumed on another thread, the actual number
-    /// of available slots may increase at any time (up to the [`RingBuffer::capacity()`]).
-    ///
-    /// To check for a single available slot,
-    /// using [`Producer::is_full()`] is often quicker
-    /// (because it might not have to check an atomic variable).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::RingBuffer;
-    ///
-    /// let (p, c) = RingBuffer::<f32>::new(1024);
-    ///
-    /// assert_eq!(p.slots(), 1024);
-    /// ```
     pub fn slots(&self) -> usize {
         let head = self.buffer.indices().head().load(Ordering::Acquire);
         self.cached_head.set(head);
@@ -196,61 +138,10 @@ impl<S: Storage, R: Deref<Target = S>> Producer<R> {
         self.buffer.addr().capacity() - self.buffer.addr().distance(head, tail)
     }
 
-    /// Returns `true` if there are currently no slots available for writing.
-    ///
-    /// A full ring buffer might cease to be full at any time
-    /// if the corresponding [`Consumer`] is consuming items in another thread.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::RingBuffer;
-    ///
-    /// let (p, c) = RingBuffer::<f32>::new(1);
-    ///
-    /// assert!(!p.is_full());
-    /// ```
-    ///
-    /// Since items can be concurrently consumed on another thread, the ring buffer
-    /// might not be full for long:
-    ///
-    /// ```
-    /// # use rtrb::RingBuffer;
-    /// # let (p, c) = RingBuffer::<f32>::new(1);
-    /// if p.is_full() {
-    ///     // The buffer might be full, but it might as well not be
-    ///     // if an item was just consumed on another thread.
-    /// }
-    /// ```
-    ///
-    /// However, if it's not full, another thread cannot change that:
-    ///
-    /// ```
-    /// # use rtrb::RingBuffer;
-    /// # let (p, c) = RingBuffer::<f32>::new(1);
-    /// if !p.is_full() {
-    ///     // At least one slot is guaranteed to be available for writing.
-    /// }
-    /// ```
     pub fn is_full(&self) -> bool {
         self.next_tail().is_none()
     }
 
-    /// Returns the total capacity of the queue.
-    ///
-    /// At any time, the capacity is subdivided into
-    /// [`Producer::slots()`] available for writing and
-    /// [`Consumer::slots()`] available for reading.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::RingBuffer;
-    ///
-    /// let (producer, consumer) = RingBuffer::<f32>::new(100);
-    /// assert_eq!(producer.capacity(), 100);
-    /// assert_eq!(consumer.capacity(), 100);
-    /// ```
     pub fn capacity(&self) -> usize {
         self.buffer.addr().capacity()
     }
@@ -279,26 +170,6 @@ impl<S: Storage, R: Deref<Target = S>> Producer<R> {
     }
 }
 
-/// The consumer side of a [`RingBuffer`].
-///
-/// Can be moved between threads,
-/// but references from different threads are not allowed
-/// (i.e. it is [`Send`] but not [`Sync`]).
-///
-/// Can only be created with [`RingBuffer::new()`]
-/// (together with its counterpart, the [`Producer`]).
-///
-/// Individual elements can be moved out of the ring buffer with [`Consumer::pop()`],
-/// multiple elements at once can be read with [`Consumer::read_chunk()`].
-///
-/// The number of slots currently available for reading can be obtained with
-/// [`Consumer::slots()`].
-///
-/// When the `Consumer` is dropped, [`Producer::is_abandoned()`] will return `true`.
-/// This can be used as a crude way to communicate to the sending thread
-/// that no more data will be consumed.
-/// When the `Consumer` is dropped after the [`Producer`] has already been dropped,
-/// [`RingBuffer::drop()`] will be called, freeing the allocated memory.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Consumer<R> {
     /// A reference to the ring buffer.
@@ -321,35 +192,6 @@ impl<S: Storage, R: Deref<Target = S>> Consumer<R> {
         }
     }
 
-    /// Attempts to pop an element from the queue.
-    ///
-    /// The element is *moved* out of the ring buffer and its slot
-    /// is made available to be filled by the [`Producer`] again.
-    ///
-    /// # Errors
-    ///
-    /// If the queue is empty, an error is returned.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::{PopError, RingBuffer};
-    ///
-    /// let (mut p, mut c) = RingBuffer::new(1);
-    ///
-    /// assert_eq!(p.push(10), Ok(()));
-    /// assert_eq!(c.pop(), Ok(10));
-    /// assert_eq!(c.pop(), Err(PopError::Empty));
-    /// ```
-    ///
-    /// To obtain an [`Option<T>`](Option), use [`.ok()`](Result::ok) on the result.
-    ///
-    /// ```
-    /// # use rtrb::RingBuffer;
-    /// # let (mut p, mut c) = RingBuffer::new(1);
-    /// assert_eq!(p.push(20), Ok(()));
-    /// assert_eq!(c.pop().ok(), Some(20));
-    /// ```
     pub fn pop(&mut self) -> Result<S::Item, PopError> {
         if let Some(head) = self.next_head() {
             let value = unsafe { self.buffer.slot_ptr(head).read() };
@@ -361,24 +203,6 @@ impl<S: Storage, R: Deref<Target = S>> Consumer<R> {
         }
     }
 
-    /// Attempts to read an element from the queue without removing it.
-    ///
-    /// # Errors
-    ///
-    /// If the queue is empty, an error is returned.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::{PeekError, RingBuffer};
-    ///
-    /// let (mut p, c) = RingBuffer::new(1);
-    ///
-    /// assert_eq!(c.peek(), Err(PeekError::Empty));
-    /// assert_eq!(p.push(10), Ok(()));
-    /// assert_eq!(c.peek(), Ok(&10));
-    /// assert_eq!(c.peek(), Ok(&10));
-    /// ```
     pub fn peek(&self) -> Result<&S::Item, PeekError> {
         if let Some(head) = self.next_head() {
             Ok(unsafe { &*self.buffer.slot_ptr(head) })
@@ -387,24 +211,6 @@ impl<S: Storage, R: Deref<Target = S>> Consumer<R> {
         }
     }
 
-    /// Returns the number of slots available for reading.
-    ///
-    /// Since items can be concurrently produced on another thread, the actual number
-    /// of available slots may increase at any time (up to the [`RingBuffer::capacity()`]).
-    ///
-    /// To check for a single available slot,
-    /// using [`Consumer::is_empty()`] is often quicker
-    /// (because it might not have to check an atomic variable).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::RingBuffer;
-    ///
-    /// let (p, c) = RingBuffer::<f32>::new(1024);
-    ///
-    /// assert_eq!(c.slots(), 0);
-    /// ```
     pub fn slots(&self) -> usize {
         let tail = self.buffer.indices().tail().load(Ordering::Acquire);
         self.cached_tail.set(tail);
@@ -413,104 +219,16 @@ impl<S: Storage, R: Deref<Target = S>> Consumer<R> {
         self.buffer.addr().distance(head, tail)
     }
 
-    /// Returns `true` if there are currently no slots available for reading.
-    ///
-    /// An empty ring buffer might cease to be empty at any time
-    /// if the corresponding [`Producer`] is producing items in another thread.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::RingBuffer;
-    ///
-    /// let (p, c) = RingBuffer::<f32>::new(1);
-    ///
-    /// assert!(c.is_empty());
-    /// ```
-    ///
-    /// Since items can be concurrently produced on another thread, the ring buffer
-    /// might not be empty for long:
-    ///
-    /// ```
-    /// # use rtrb::RingBuffer;
-    /// # let (p, c) = RingBuffer::<f32>::new(1);
-    /// if c.is_empty() {
-    ///     // The buffer might be empty, but it might as well not be
-    ///     // if an item was just produced on another thread.
-    /// }
-    /// ```
-    ///
-    /// However, if it's not empty, another thread cannot change that:
-    ///
-    /// ```
-    /// # use rtrb::RingBuffer;
-    /// # let (p, c) = RingBuffer::<f32>::new(1);
-    /// if !c.is_empty() {
-    ///     // At least one slot is guaranteed to be available for reading.
-    /// }
-    /// ```
     pub fn is_empty(&self) -> bool {
         self.next_head().is_none()
     }
 
     /*
-    /// Returns `true` if the corresponding [`Producer`] has been destroyed.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::RingBuffer;
-    ///
-    /// let (mut p, mut c) = RingBuffer::new(7);
-    /// assert!(!c.is_abandoned());
-    /// assert_eq!(p.push(10), Ok(()));
-    /// drop(p);
-    /// assert!(c.is_abandoned());
-    /// // The items that are left in the ring buffer can still be consumed:
-    /// assert_eq!(c.pop(), Ok(10));
-    /// ```
-    ///
-    /// Since the producer can be concurrently dropped on another thread,
-    /// the consumer might become abandoned at any time:
-    ///
-    /// ```
-    /// # use rtrb::RingBuffer;
-    /// # let (p, c) = RingBuffer::<i32>::new(1);
-    /// if !c.is_abandoned() {
-    ///     // Right now, the producer might still be alive, but it might as well not be
-    ///     // if another thread has just dropped it.
-    /// }
-    /// ```
-    ///
-    /// However, if it already is abandoned, it will stay that way:
-    ///
-    /// ```
-    /// # use rtrb::RingBuffer;
-    /// # let (p, c) = RingBuffer::<i32>::new(1);
-    /// if c.is_abandoned() {
-    ///     // The producer does definitely not exist anymore.
-    /// }
-    /// ```
     pub fn is_abandoned(&self) -> bool {
         S::is_abandoned(&self.buffer)
     }
     */
 
-    /// Returns the total capacity of the queue.
-    ///
-    /// At any time, the capacity is subdivided into
-    /// [`Producer::slots()`] available for writing and
-    /// [`Consumer::slots()`] available for reading.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use rtrb::RingBuffer;
-    ///
-    /// let (producer, consumer) = RingBuffer::<f32>::new(100);
-    /// assert_eq!(producer.capacity(), 100);
-    /// assert_eq!(consumer.capacity(), 100);
-    /// ```
     pub fn capacity(&self) -> usize {
         self.buffer.addr().capacity()
     }

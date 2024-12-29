@@ -35,6 +35,7 @@ $(
 $(
     group_large.bench_function($id, |b| {
         b.iter_custom(|iters| {
+            core_affinity::set_for_current(core_affinity::CoreId { id: 5 });
             let (create, push, pop) = help_with_type_inference($create, $push, $pop);
             // Queue is so long that there is no contention between threads.
             let (mut p, mut c) = create((2 * iters).try_into().unwrap());
@@ -45,6 +46,7 @@ $(
             let push_thread = {
                 let barrier = Arc::clone(&barrier);
                 std::thread::spawn(move || {
+                    core_affinity::set_for_current(core_affinity::CoreId { id: 4 });
                     barrier.wait();
                     let start_pushing = std::time::Instant::now();
                     for i in 0..iters {
@@ -122,11 +124,13 @@ $(
 $(
     group_small.bench_function($id, |b| {
         b.iter_custom(|iters| {
+            core_affinity::set_for_current(core_affinity::CoreId { id: 5 });
             let (create, push, pop) = help_with_type_inference($create, $push, $pop);
             // Queue is very short in order to force a lot of contention between threads.
             let (mut p, mut c) = create(2);
             let push_thread = {
                 std::thread::spawn(move || {
+                    core_affinity::set_for_current(core_affinity::CoreId { id: 4 });
                     // The timing starts once both threads are ready.
                     let start = std::time::Instant::now();
                     for i in 0..iters {

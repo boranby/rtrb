@@ -23,8 +23,9 @@ default = ["std"]
 std = []
 
 [dev-dependencies]
+core_affinity = "0.8.1"
 rand = "0.8"
-criterion = "0.3"
+criterion = "0.5"
 # TODO: This is only needed for the doctests of cache_padded.rs! Is there a way to avoid this?
 crossbeam-utils = { version = "0.8", default-features = false }
 

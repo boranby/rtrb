@@ -35,7 +35,7 @@ $(
 $(
     group_large.bench_function($id, |b| {
         b.iter_custom(|iters| {
-            core_affinity::set_for_current(core_affinity::CoreId { id: 5 });
+            core_affinity::set_for_current(core_affinity::CoreId { id: 8 });
             let (create, push, pop) = help_with_type_inference($create, $push, $pop);
             // Queue is so long that there is no contention between threads.
             let (mut p, mut c) = create((2 * iters).try_into().unwrap());
@@ -124,7 +124,7 @@ $(
 $(
     group_small.bench_function($id, |b| {
         b.iter_custom(|iters| {
-            core_affinity::set_for_current(core_affinity::CoreId { id: 5 });
+            core_affinity::set_for_current(core_affinity::CoreId { id: 8 });
             let (create, push, pop) = help_with_type_inference($create, $push, $pop);
             // Queue is very short in order to force a lot of contention between threads.
             let (mut p, mut c) = create(2);
